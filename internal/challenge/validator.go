@@ -180,6 +180,32 @@ func (v *CiteValidator) CountByLayer(l Layer) int {
 	return n
 }
 
+// dictionaryTermsAcrossScopes returns every dictionary-layer term across
+// the union of `business` (apex) + every per-stack scope dictionary lives in.
+// Used by BuildChallengeSchema to assemble the standards/anti-patterns/
+// decisions enums (regex-filtered downstream).
+func (v *CiteValidator) dictionaryTermsAcrossScopes(requestScopes []string) []string {
+	// For dictionary terms specifically, we union across ALL scopes since
+	// artifact IDs are platform-global (no per-stack partition for IDs
+	// like D17 or AP3).
+	scopeMap := v.termsByLayerScope[LayerDictionary]
+	if scopeMap == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, terms := range scopeMap {
+		for _, t := range terms {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TermsForScopes returns, for each layer, the union of terms from the apex
 // (`business`) scope plus the request's specific scopes. Used by retry-hint
 // composition to keep enumerations focused.
@@ -467,7 +493,11 @@ func (v *CiteValidator) resolves(c string) bool {
 	return false
 }
 
-var pathLikeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_./-]*\.[a-zA-Z0-9_]+$`)
+// pathLikeRE accepts platform-style relative paths. Allows spaces because
+// some directories (e.g., "core-api-e2e/Postman Collections/") legitimately
+// contain them. Allows + because some filenames use it. Caller still gates
+// via repoPrefixes so this regex isn't a security boundary.
+var pathLikeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_ ./+-]*\.[a-zA-Z0-9_]+$`)
 
 func (v *CiteValidator) looksLikeFilePath(s string) bool {
 	if !strings.ContainsRune(s, '/') {

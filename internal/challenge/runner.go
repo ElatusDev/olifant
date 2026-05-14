@@ -171,12 +171,20 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		maxRetries = 1
 	}
 
+	// Build a per-run schema with enum constraints derived from the
+	// validator's per-scope dictionary + concept terms. The grammar engine
+	// rejects generic categories like "use_of_hooks" / "consistent_tagging"
+	// at decode time, forcing the model to choose from our explicit list
+	// or emit an empty array.
+	scopeForSchema := scopes
+	dynamicSchema := BuildChallengeSchema(cfg.Validator, scopeForSchema)
+
 	gen := func(promptText string) (*ollama.GenerateResponse, error) {
 		return oc.Generate(ctx, ollama.GenerateRequest{
 			Model:  cfg.Synthesizer,
 			System: systemPrompt,
 			Prompt: promptText,
-			Format: challengeJSONSchema,
+			Format: dynamicSchema,
 			Options: map[string]interface{}{
 				"temperature": cfg.Temperature,
 				"num_predict": cfg.MaxTokens,
