@@ -1,0 +1,18 @@
+# Compiled binaries
+/bin/
+*.exe
+*.test
+*.out
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+
+# Go workspace files (local-dev specific)
+go.work
+go.work.sum
+
+# Profiling / coverage
+*.prof
+coverage.out
