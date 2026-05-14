@@ -45,18 +45,36 @@ type Violation struct {
 	Note     string // human-readable explanation
 }
 
-// CiteValidator holds the corpus of legal terms + file paths and exposes
-// extensive post-output validation. Reusable across many calls.
+// Layer identifies which abstraction-layer directory a term came from. Used
+// for surgical retry hints ("you cited a pattern — here are the legal
+// concept names").
+type Layer string
+
+const (
+	LayerDictionary  Layer = "dictionary"  // dictionary/<scope>/<file>.yaml — artifact IDs (D###, AP##, SB-##, …)
+	LayerConcept     Layer = "concept"     // concepts/concepts.yaml
+	LayerConstraint  Layer = "constraint"  // constraints/constraints.yaml
+	LayerGlossary    Layer = "glossary"    // glossary/glossary.yaml
+)
+
+// CiteValidator holds the corpus of legal terms (across all layers) and file
+// path prefixes. Reusable across many calls.
 type CiteValidator struct {
-	dictTerms    map[string]struct{}
+	// knownTerms is the union — fast O(1) lookup for cite resolution.
+	knownTerms map[string]struct{}
+	// termsByLayer is layered — used to suggest "the right kind of value"
+	// when a cite slot triggers cite_unresolved.
+	termsByLayer map[Layer][]string
 	platformRoot string
 	repoPrefixes []string
 }
 
-// NewCiteValidator loads dictionary entries once.
-func NewCiteValidator(platformRoot, dictDir string) (*CiteValidator, error) {
+// NewCiteValidator loads every layer under kbRoot/{dictionary,concepts,
+// constraints,glossary} into one O(1) lookup. Synonyms count as valid terms.
+func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 	v := &CiteValidator{
-		dictTerms:    map[string]struct{}{},
+		knownTerms:   map[string]struct{}{},
+		termsByLayer: map[Layer][]string{},
 		platformRoot: platformRoot,
 		repoPrefixes: []string{
 			"core-api", "akademia-plus-web", "elatusdev-web",
@@ -66,44 +84,75 @@ func NewCiteValidator(platformRoot, dictDir string) (*CiteValidator, error) {
 			"decisions", "anti-patterns", "standards", "patterns",
 			"workflows", "prompts", "retrospectives", "templates",
 			"skills", "operations", "architecture", "audit-report",
-			"ux", "views",
+			"ux", "views", "concepts", "constraints", "glossary", "dsl",
 		},
 	}
-	if err := filepath.Walk(dictDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
+
+	type layerSource struct {
+		layer Layer
+		path  string
+	}
+	sources := []layerSource{
+		{LayerDictionary, filepath.Join(kbRoot, "dictionary")},
+		{LayerConcept, filepath.Join(kbRoot, "concepts")},
+		{LayerConstraint, filepath.Join(kbRoot, "constraints")},
+		{LayerGlossary, filepath.Join(kbRoot, "glossary")},
+	}
+
+	for _, src := range sources {
+		if _, statErr := os.Stat(src.path); statErr != nil {
+			continue
 		}
-		if !strings.HasSuffix(path, ".yaml") {
-			return nil
-		}
-		raw, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return nil
-		}
-		var entries []struct {
-			Term     string   `yaml:"term"`
-			Synonyms []string `yaml:"synonyms"`
-		}
-		if uerr := yaml.Unmarshal(raw, &entries); uerr != nil {
-			return nil
-		}
-		for _, e := range entries {
-			if e.Term != "" {
-				v.dictTerms[e.Term] = struct{}{}
+		if err := filepath.Walk(src.path, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
 			}
-			for _, s := range e.Synonyms {
-				v.dictTerms[s] = struct{}{}
+			if !strings.HasSuffix(path, ".yaml") {
+				return nil
 			}
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return nil
+			}
+			var entries []struct {
+				Term     string   `yaml:"term"`
+				Synonyms []string `yaml:"synonyms"`
+			}
+			if uerr := yaml.Unmarshal(raw, &entries); uerr != nil {
+				return nil
+			}
+			for _, e := range entries {
+				if e.Term != "" {
+					if _, dup := v.knownTerms[e.Term]; !dup {
+						v.termsByLayer[src.layer] = append(v.termsByLayer[src.layer], e.Term)
+					}
+					v.knownTerms[e.Term] = struct{}{}
+				}
+				for _, s := range e.Synonyms {
+					v.knownTerms[s] = struct{}{}
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		return nil
-	}); err != nil {
-		return nil, err
+	}
+
+	// Stable order for retry-hint enumeration.
+	for layer := range v.termsByLayer {
+		sort.Strings(v.termsByLayer[layer])
 	}
 	return v, nil
 }
 
-// KnownCount returns the number of dictionary terms loaded (informational).
-func (v *CiteValidator) KnownCount() int { return len(v.dictTerms) }
+// KnownCount returns the total number of unique terms loaded (informational).
+func (v *CiteValidator) KnownCount() int { return len(v.knownTerms) }
+
+// TermsByLayer returns the canonical terms for one layer (sorted). Used by
+// retry-hint composition.
+func (v *CiteValidator) TermsByLayer(l Layer) []string {
+	return v.termsByLayer[l]
+}
 
 // challengeShape is the minimal parse target for validation.
 type challengeShape struct {
@@ -345,8 +394,9 @@ func FilterBlockers(vs []Violation) []Violation {
 	return out
 }
 
-// resolves returns true if `c` is a known artifact ID OR resolves to a real
-// platform file path (with optional #anchor or #Lstart-Lend suffix).
+// resolves returns true if `c` is a known term from any abstraction layer
+// (dictionary, concepts, constraints, glossary) OR a real platform file
+// path (with optional #anchor or #Lstart-Lend suffix).
 func (v *CiteValidator) resolves(c string) bool {
 	c = strings.TrimSpace(c)
 	if c == "" {
@@ -356,10 +406,10 @@ func (v *CiteValidator) resolves(c string) bool {
 	if hashIdx := strings.IndexByte(c, '#'); hashIdx >= 0 {
 		base = c[:hashIdx]
 	}
-	if _, ok := v.dictTerms[base]; ok {
+	if _, ok := v.knownTerms[base]; ok {
 		return true
 	}
-	if _, ok := v.dictTerms[c]; ok {
+	if _, ok := v.knownTerms[c]; ok {
 		return true
 	}
 	if v.looksLikeFilePath(base) {
@@ -402,8 +452,9 @@ func (v *CiteValidator) fileExists(relPath string) bool {
 // RetryPromptAddendum builds a focused "fix your last output" suffix listing
 // every BLOCKER violation so the model has full context for the next attempt.
 // `originalRequest` is passed so the model can copy it verbatim if the request
-// field needs correction.
-func RetryPromptAddendum(violations []Violation, originalRequest string) string {
+// field needs correction. `v` is the validator — used to enumerate the small
+// abstraction-layer term sets so the model has a concrete allow-list.
+func (v *CiteValidator) RetryPromptAddendum(violations []Violation, originalRequest string) string {
 	blockers := FilterBlockers(violations)
 	if len(blockers) == 0 {
 		return ""
@@ -440,7 +491,24 @@ func RetryPromptAddendum(violations []Violation, originalRequest string) string 
 		}
 		fmt.Fprintf(&sb, "4. The 'request' field MUST be a faithful one-line summary of the user input. Suggestion: %q (use this or paraphrase — but DO NOT use placeholders like \"clarification_required\" or \"no_changes_required\").\n", summary)
 	}
-	sb.WriteString("5. Cite format: paths use forward slashes ('/'), exactly as they appeared in the RETRIEVED CONTEXT. Do NOT replace slashes with underscores. Example correct cite: core-api/multi-tenant-data/.../Foo.java#L1-L80 — NOT core_api_multi_tenant_data...\n")
-	sb.WriteString("\nProduce the corrected verdict.\n")
+	sb.WriteString("5. Cite format: paths use forward slashes ('/'), exactly as they appeared in the RETRIEVED CONTEXT. Do NOT replace slashes with underscores. Example correct cite: core-api/multi-tenant-data/.../Foo.java#L1-L80 — NOT core_api_multi_tenant_data...\n\n")
+
+	// Enumerate the SMALL layer term sets so the model has a concrete
+	// allow-list. Dictionary has 800+ entries (too many to enumerate);
+	// scope dictionary citations to artifact IDs from RETRIEVED CONTEXT.
+	if concepts := v.TermsByLayer(LayerConcept); len(concepts) > 0 {
+		fmt.Fprintf(&sb, "LEGAL CONCEPT NAMES (use these — or leave the slot empty — never invent new ones):\n  %s\n\n",
+			strings.Join(concepts, ", "))
+	}
+	if constraints := v.TermsByLayer(LayerConstraint); len(constraints) > 0 {
+		fmt.Fprintf(&sb, "LEGAL CONSTRAINT NAMES (cite these in contradicts when the request violates a hard rule):\n  %s\n\n",
+			strings.Join(constraints, ", "))
+	}
+	if glossary := v.TermsByLayer(LayerGlossary); len(glossary) > 0 {
+		fmt.Fprintf(&sb, "LEGAL GLOSSARY TERMS (canonical handles for platform aliases):\n  %s\n\n",
+			strings.Join(glossary, ", "))
+	}
+	sb.WriteString("For artifact IDs (D###, AP##, SB-##, etc.) and file paths: use ONLY those that appear in the RETRIEVED CONTEXT above.\n\n")
+	sb.WriteString("Produce the corrected verdict.\n")
 	return sb.String()
 }

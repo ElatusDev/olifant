@@ -116,18 +116,22 @@ func Challenge(args []string) int {
 		synthesizer = *synth
 	}
 
-	// Cite validator: load dictionary terms + repo prefixes.
+	// Cite validator: load all abstraction layers under knowledge-base/.
 	// Autodetect platform root from kb-root.
 	var validator *challenge.CiteValidator
 	if found, ok := findUp("knowledge-base/README.md"); ok {
 		kbRoot := filepath.Dir(found)
 		platformRoot := filepath.Dir(kbRoot)
-		v, verr := challenge.NewCiteValidator(platformRoot, filepath.Join(kbRoot, "dictionary"))
+		v, verr := challenge.NewCiteValidator(platformRoot, kbRoot)
 		if verr == nil {
 			validator = v
 			if *verbose {
-				fmt.Printf("validator: %d dictionary terms loaded from %s\n",
-					v.KnownCount(), filepath.Join(kbRoot, "dictionary"))
+				fmt.Printf("validator: %d terms loaded (dict=%d concepts=%d constraints=%d glossary=%d)\n",
+					v.KnownCount(),
+					len(v.TermsByLayer(challenge.LayerDictionary)),
+					len(v.TermsByLayer(challenge.LayerConcept)),
+					len(v.TermsByLayer(challenge.LayerConstraint)),
+					len(v.TermsByLayer(challenge.LayerGlossary)))
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "challenge: validator init failed (%v) — proceeding without\n", verr)
