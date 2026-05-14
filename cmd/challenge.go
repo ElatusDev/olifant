@@ -11,6 +11,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/config"
+	"github.com/ElatusDev/olifant/internal/shortterm"
 )
 
 // languageHintForPath maps a file extension to a short lang tag for the
@@ -76,6 +77,7 @@ func Challenge(args []string) int {
 	verbose := fs.Bool("v", false, "verbose retrieval log")
 	synth := fs.String("synth", "", "synthesizer model override")
 	codeFile := fs.String("file", "", "code file to review (frames input as review-request)")
+	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
 	_ = fs.Parse(args)
 
 	var request string
@@ -205,5 +207,43 @@ func Challenge(args []string) int {
 	}
 	// YAML goes to stdout
 	fmt.Println(res.YAMLOutput)
+
+	// Auto-record turn to short-term/turns/<id>.yaml unless suppressed.
+	if !*noRecord {
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			kbRoot := filepath.Dir(found)
+			ts := time.Now()
+			verdict, proceed := res.ExtractVerdict()
+			rec := &shortterm.TurnRecord{
+				TurnID:     shortterm.NewTurnID(ts, request),
+				TS:         ts.UTC().Format(time.RFC3339),
+				Subcommand: "challenge",
+				Scope:      scopeList,
+				Request:    request,
+				Challenge: &shortterm.ChallengeBlock{
+					Verdict:             verdict,
+					Proceed:             proceed,
+					RetrievedSources:    res.RetrievedSources,
+					Output:              res.YAMLOutput,
+					CiteAttempts:        res.CiteAttempts,
+					RemainingViolations: res.RemainingCiteViolations,
+				},
+				Performance: shortterm.PerformanceBlock{
+					ElapsedMs:    res.Elapsed.Milliseconds(),
+					EmbedMs:      res.EmbedMs,
+					RetrieveMs:   res.RetrieveMs,
+					SynthMs:      res.SynthMs,
+					EvalTokens:   res.SynthEvalCount,
+					TokensPerSec: res.SynthTokensSec,
+				},
+			}
+			path, werr := shortterm.Write(kbRoot, rec)
+			if werr != nil {
+				fmt.Fprintf(os.Stderr, "# warn: failed to write turn record: %v\n", werr)
+			} else if *verbose {
+				fmt.Fprintf(os.Stderr, "# turn recorded: %s\n", path)
+			}
+		}
+	}
 	return 0
 }

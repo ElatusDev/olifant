@@ -31,6 +31,8 @@ func main() {
 		os.Exit(cmd.Repo(args))
 	case "challenge":
 		os.Exit(cmd.Challenge(args))
+	case "turn":
+		os.Exit(cmd.Turn(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -53,6 +55,7 @@ SUBCOMMANDS:
   dictionary   bootstrap — manage the CNL dictionary
   repo         ingest — chunk + embed source from the 7 platform repos
   challenge    challenge "<request>" — step 0: produce a verdict in YAML
+  turn         list | show | stats — inspect short-term event ledger
   version      print version
   help         this message
 

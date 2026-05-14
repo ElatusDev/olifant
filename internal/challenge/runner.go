@@ -43,17 +43,19 @@ type Config struct {
 
 // Result is the final emitted artifact.
 type Result struct {
-	RequestText      string
-	RetrievedCount   int
-	YAMLOutput       string
-	JSONValid        bool // true if the synth output parsed as JSON
-	Elapsed          time.Duration
-	EmbedMs          int64
-	RetrieveMs       int64
-	SynthMs          int64
-	SynthEvalCount   int
-	SynthTokensSec   float64
-	CiteAttempts     int         // 1 = first try clean; 2+ = retried after violations
+	RequestText             string
+	RetrievedCount          int
+	RetrievedSources        []string // top-N source paths fed to the synthesizer
+	RawJSON                 string   // the model's literal JSON output
+	YAMLOutput              string
+	JSONValid               bool     // true if the synth output parsed as JSON
+	Elapsed                 time.Duration
+	EmbedMs                 int64
+	RetrieveMs              int64
+	SynthMs                 int64
+	SynthEvalCount          int
+	SynthTokensSec          float64
+	CiteAttempts            int         // 1 = first try clean; 2+ = retried after violations
 	RemainingCiteViolations []Violation // unresolved after final attempt (empty = clean)
 }
 
@@ -240,9 +242,19 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		tokensPerSec = float64(totalEvalCount) / (float64(totalEvalDuration) / 1e9)
 	}
 
+	// Collect source paths from retrieved hits for the short-term record.
+	sourcePaths := make([]string, 0, len(hits))
+	for _, h := range hits {
+		if src, ok := h.Meta["source"].(string); ok && src != "" {
+			sourcePaths = append(sourcePaths, src)
+		}
+	}
+
 	return &Result{
 		RequestText:             cfg.Request,
 		RetrievedCount:          len(hits),
+		RetrievedSources:        sourcePaths,
+		RawJSON:                 strings.TrimSpace(resp.Response),
 		YAMLOutput:              yamlOut,
 		JSONValid:               jsonValid,
 		Elapsed:                 time.Since(start),
@@ -254,6 +266,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		CiteAttempts:            attempts,
 		RemainingCiteViolations: lastViolations,
 	}, nil
+}
+
+// ExtractVerdict returns (verdict, proceed) parsed from RawJSON, empty
+// strings if parsing fails. Used by the short-term writer to index turns.
+func (r *Result) ExtractVerdict() (verdict, proceed string) {
+	var shape struct {
+		Challenge struct {
+			Verdict string `json:"verdict"`
+			Proceed string `json:"proceed"`
+		} `json:"challenge"`
+	}
+	if err := json.Unmarshal([]byte(r.RawJSON), &shape); err != nil {
+		return "", ""
+	}
+	return shape.Challenge.Verdict, shape.Challenge.Proceed
 }
 
 // jsonToYAML parses model output as JSON and re-marshals as YAML. Returns
