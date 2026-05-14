@@ -16,8 +16,8 @@ import (
 
 // embedderMaxChars caps an input passed to the embedder. nomic-embed-text via
 // Ollama rejects inputs that exceed its context (despite truncate: true).
-// 6000 chars ≈ 1500 tokens, comfortably under the 2048-token effective limit.
-const embedderMaxChars = 6000
+// Empirically the effective cap is ~5000 chars; 4000 is defensive.
+const embedderMaxChars = 4000
 
 // capInput truncates s to maxChars at a UTF-8 boundary.
 func capInput(s string, maxChars int) string {
@@ -162,16 +162,44 @@ func indexScope(
 
 		emb, err := oc.Embed(ctx, embedder, inputs)
 		if err != nil {
-			return upserted, batches, fmt.Errorf("embed batch %d..%d: %w", start, end, err)
+			// One bad chunk shouldn't kill the whole batch. Fall back to
+			// per-chunk embedding and skip any that the model rejects.
+			fmt.Fprintf(os.Stderr, "    warn: batch %d..%d failed (%v); retrying per-chunk\n", start, end, err)
+			emb = make([][]float32, len(batch))
+			skipped := 0
+			for i, in := range inputs {
+				single, ierr := oc.Embed(ctx, embedder, []string{in})
+				if ierr != nil || len(single) != 1 {
+					fmt.Fprintf(os.Stderr, "    skip chunk %s (%d chars): %v\n",
+						batch[i].ChunkID[:12], len(in), ierr)
+					emb[i] = nil
+					skipped++
+					continue
+				}
+				emb[i] = single[0]
+			}
+			if skipped == len(batch) {
+				continue
+			}
 		}
 
-		ids := make([]string, len(batch))
-		docs := make([]string, len(batch))
-		metas := make([]map[string]interface{}, len(batch))
+		// Filter out chunks whose embed was skipped.
+		ids := make([]string, 0, len(batch))
+		docs := make([]string, 0, len(batch))
+		metas := make([]map[string]interface{}, 0, len(batch))
+		filtered := make([][]float32, 0, len(batch))
 		for i, c := range batch {
-			ids[i] = c.ChunkID
-			docs[i] = c.Body
-			metas[i] = chunkMetadataForChroma(c)
+			if emb[i] == nil {
+				continue
+			}
+			ids = append(ids, c.ChunkID)
+			docs = append(docs, c.Body)
+			metas = append(metas, chunkMetadataForChroma(c))
+			filtered = append(filtered, emb[i])
+		}
+		emb = filtered
+		if len(ids) == 0 {
+			continue
 		}
 
 		if err := cc.Upsert(ctx, collectionID, chroma.UpsertRequest{
