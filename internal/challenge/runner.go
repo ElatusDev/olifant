@@ -210,7 +210,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 					fmt.Fprintln(os.Stderr)
 				}
 			}
-			retryPrompt := prompt + cfg.Validator.RetryPromptAddendum(violations, cfg.Request)
+			retryPrompt := prompt + cfg.Validator.RetryPromptAddendum(violations, cfg.Request, scopes)
 			retryResp, rerr := gen(retryPrompt)
 			if rerr != nil {
 				if cfg.Verbose {

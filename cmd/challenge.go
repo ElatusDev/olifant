@@ -128,10 +128,10 @@ func Challenge(args []string) int {
 			if *verbose {
 				fmt.Printf("validator: %d terms loaded (dict=%d concepts=%d constraints=%d glossary=%d)\n",
 					v.KnownCount(),
-					len(v.TermsByLayer(challenge.LayerDictionary)),
-					len(v.TermsByLayer(challenge.LayerConcept)),
-					len(v.TermsByLayer(challenge.LayerConstraint)),
-					len(v.TermsByLayer(challenge.LayerGlossary)))
+					v.CountByLayer(challenge.LayerDictionary),
+					v.CountByLayer(challenge.LayerConcept),
+					v.CountByLayer(challenge.LayerConstraint),
+					v.CountByLayer(challenge.LayerGlossary))
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "challenge: validator init failed (%v) — proceeding without\n", verr)

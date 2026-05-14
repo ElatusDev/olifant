@@ -57,25 +57,33 @@ const (
 	LayerGlossary    Layer = "glossary"    // glossary/glossary.yaml
 )
 
-// CiteValidator holds the corpus of legal terms (across all layers) and file
-// path prefixes. Reusable across many calls.
+// CiteValidator holds the corpus of legal terms (across all layers and
+// scopes) and file path prefixes. Reusable across many calls.
 type CiteValidator struct {
 	// knownTerms is the union — fast O(1) lookup for cite resolution.
 	knownTerms map[string]struct{}
-	// termsByLayer is layered — used to suggest "the right kind of value"
-	// when a cite slot triggers cite_unresolved.
-	termsByLayer map[Layer][]string
-	platformRoot string
-	repoPrefixes []string
+	// termsByLayerScope: [layer][scope][]term  — for surgical, scope-aware
+	// retry hints. `business` is the apex scope, always included.
+	termsByLayerScope map[Layer]map[string][]string
+	platformRoot      string
+	repoPrefixes      []string
 }
 
+// ApexScope is the business-domain layer that's always loaded regardless of
+// the request's scope filter.
+const ApexScope = "business"
+
 // NewCiteValidator loads every layer under kbRoot/{dictionary,concepts,
-// constraints,glossary} into one O(1) lookup. Synonyms count as valid terms.
+// constraints,glossary} into a per-layer per-scope index. Each YAML file's
+// scope is derived from its parent directory name (e.g.,
+// concepts/backend/concepts.yaml → scope "backend"). Files at a layer's
+// root (no scope dir) are treated as scope "universal" for backward
+// compatibility with the old flat layout.
 func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 	v := &CiteValidator{
-		knownTerms:   map[string]struct{}{},
-		termsByLayer: map[Layer][]string{},
-		platformRoot: platformRoot,
+		knownTerms:        map[string]struct{}{},
+		termsByLayerScope: map[Layer]map[string][]string{},
+		platformRoot:      platformRoot,
 		repoPrefixes: []string{
 			"core-api", "akademia-plus-web", "elatusdev-web",
 			"akademia-plus-central", "akademia-plus-go",
@@ -110,6 +118,16 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 			if !strings.HasSuffix(path, ".yaml") {
 				return nil
 			}
+			// Scope is the immediate parent directory under the layer
+			// root (e.g., concepts/backend/concepts.yaml → "backend").
+			// If no scope dir (file directly under layer root), use ApexScope.
+			scope := ApexScope
+			if rel, rErr := filepath.Rel(src.path, path); rErr == nil {
+				if parts := strings.Split(filepath.ToSlash(rel), "/"); len(parts) > 1 {
+					scope = parts[0]
+				}
+			}
+
 			raw, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return nil
@@ -121,10 +139,13 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 			if uerr := yaml.Unmarshal(raw, &entries); uerr != nil {
 				return nil
 			}
+			if _, ok := v.termsByLayerScope[src.layer]; !ok {
+				v.termsByLayerScope[src.layer] = map[string][]string{}
+			}
 			for _, e := range entries {
 				if e.Term != "" {
 					if _, dup := v.knownTerms[e.Term]; !dup {
-						v.termsByLayer[src.layer] = append(v.termsByLayer[src.layer], e.Term)
+						v.termsByLayerScope[src.layer][scope] = append(v.termsByLayerScope[src.layer][scope], e.Term)
 					}
 					v.knownTerms[e.Term] = struct{}{}
 				}
@@ -139,8 +160,10 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 	}
 
 	// Stable order for retry-hint enumeration.
-	for layer := range v.termsByLayer {
-		sort.Strings(v.termsByLayer[layer])
+	for layer := range v.termsByLayerScope {
+		for scope := range v.termsByLayerScope[layer] {
+			sort.Strings(v.termsByLayerScope[layer][scope])
+		}
 	}
 	return v, nil
 }
@@ -148,10 +171,36 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 // KnownCount returns the total number of unique terms loaded (informational).
 func (v *CiteValidator) KnownCount() int { return len(v.knownTerms) }
 
-// TermsByLayer returns the canonical terms for one layer (sorted). Used by
-// retry-hint composition.
-func (v *CiteValidator) TermsByLayer(l Layer) []string {
-	return v.termsByLayer[l]
+// CountByLayer returns the count of terms loaded for a layer across all scopes.
+func (v *CiteValidator) CountByLayer(l Layer) int {
+	n := 0
+	for _, terms := range v.termsByLayerScope[l] {
+		n += len(terms)
+	}
+	return n
+}
+
+// TermsForScopes returns, for each layer, the union of terms from the apex
+// (`business`) scope plus the request's specific scopes. Used by retry-hint
+// composition to keep enumerations focused.
+func (v *CiteValidator) TermsForScopes(layer Layer, requestScopes []string) []string {
+	scopes := append([]string{ApexScope}, requestScopes...)
+	scopeMap := v.termsByLayerScope[layer]
+	if scopeMap == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range scopes {
+		for _, t := range scopeMap[s] {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // challengeShape is the minimal parse target for validation.
@@ -451,10 +500,10 @@ func (v *CiteValidator) fileExists(relPath string) bool {
 
 // RetryPromptAddendum builds a focused "fix your last output" suffix listing
 // every BLOCKER violation so the model has full context for the next attempt.
-// `originalRequest` is passed so the model can copy it verbatim if the request
-// field needs correction. `v` is the validator — used to enumerate the small
-// abstraction-layer term sets so the model has a concrete allow-list.
-func (v *CiteValidator) RetryPromptAddendum(violations []Violation, originalRequest string) string {
+// `originalRequest` lets the model copy the request verbatim if needed.
+// `requestScopes` filters retry hints — the enumeration includes only the
+// apex (`business`) layer plus the request's scopes.
+func (v *CiteValidator) RetryPromptAddendum(violations []Violation, originalRequest string, requestScopes []string) string {
 	blockers := FilterBlockers(violations)
 	if len(blockers) == 0 {
 		return ""
@@ -493,18 +542,19 @@ func (v *CiteValidator) RetryPromptAddendum(violations []Violation, originalRequ
 	}
 	sb.WriteString("5. Cite format: paths use forward slashes ('/'), exactly as they appeared in the RETRIEVED CONTEXT. Do NOT replace slashes with underscores. Example correct cite: core-api/multi-tenant-data/.../Foo.java#L1-L80 — NOT core_api_multi_tenant_data...\n\n")
 
-	// Enumerate the SMALL layer term sets so the model has a concrete
+	// Enumerate the SMALL per-layer term sets so the model has a concrete
 	// allow-list. Dictionary has 800+ entries (too many to enumerate);
 	// scope dictionary citations to artifact IDs from RETRIEVED CONTEXT.
-	if concepts := v.TermsByLayer(LayerConcept); len(concepts) > 0 {
+	// Enumeration includes apex (`business`) + the request's scopes.
+	if concepts := v.TermsForScopes(LayerConcept, requestScopes); len(concepts) > 0 {
 		fmt.Fprintf(&sb, "LEGAL CONCEPT NAMES (use these — or leave the slot empty — never invent new ones):\n  %s\n\n",
 			strings.Join(concepts, ", "))
 	}
-	if constraints := v.TermsByLayer(LayerConstraint); len(constraints) > 0 {
+	if constraints := v.TermsForScopes(LayerConstraint, requestScopes); len(constraints) > 0 {
 		fmt.Fprintf(&sb, "LEGAL CONSTRAINT NAMES (cite these in contradicts when the request violates a hard rule):\n  %s\n\n",
 			strings.Join(constraints, ", "))
 	}
-	if glossary := v.TermsByLayer(LayerGlossary); len(glossary) > 0 {
+	if glossary := v.TermsForScopes(LayerGlossary, requestScopes); len(glossary) > 0 {
 		fmt.Fprintf(&sb, "LEGAL GLOSSARY TERMS (canonical handles for platform aliases):\n  %s\n\n",
 			strings.Join(glossary, ", "))
 	}
