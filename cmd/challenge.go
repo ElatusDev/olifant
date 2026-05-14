@@ -116,6 +116,24 @@ func Challenge(args []string) int {
 		synthesizer = *synth
 	}
 
+	// Cite validator: load dictionary terms + repo prefixes.
+	// Autodetect platform root from kb-root.
+	var validator *challenge.CiteValidator
+	if found, ok := findUp("knowledge-base/README.md"); ok {
+		kbRoot := filepath.Dir(found)
+		platformRoot := filepath.Dir(kbRoot)
+		v, verr := challenge.NewCiteValidator(platformRoot, filepath.Join(kbRoot, "dictionary"))
+		if verr == nil {
+			validator = v
+			if *verbose {
+				fmt.Printf("validator: %d dictionary terms loaded from %s\n",
+					v.KnownCount(), filepath.Join(kbRoot, "dictionary"))
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "challenge: validator init failed (%v) — proceeding without\n", verr)
+		}
+	}
+
 	var scopeList []string
 	if *scopes != "" {
 		for _, s := range strings.Split(*scopes, ",") {
@@ -135,28 +153,52 @@ func Challenge(args []string) int {
 	defer cancel()
 
 	res, err := challenge.Run(ctx, challenge.Config{
-		Request:     request,
-		OllamaURL:   rt.OllamaURL,
-		ChromaURL:   rt.ChromaURL,
-		Embedder:    rt.Embedder,
-		Synthesizer: synthesizer,
-		Tenant:      rt.ChromaTenant,
-		Database:    rt.ChromaDatabase,
-		Scopes:      scopeList,
-		TopN:        *topN,
-		Temperature: *temp,
-		MaxTokens:   *maxTokens,
-		Verbose:     *verbose,
+		Request:            request,
+		OllamaURL:          rt.OllamaURL,
+		ChromaURL:          rt.ChromaURL,
+		Embedder:           rt.Embedder,
+		Synthesizer:        synthesizer,
+		Tenant:             rt.ChromaTenant,
+		Database:           rt.ChromaDatabase,
+		Scopes:             scopeList,
+		TopN:               *topN,
+		Temperature:        *temp,
+		MaxTokens:          *maxTokens,
+		Verbose:            *verbose,
+		Validator:          validator,
+		MaxValidateRetries: 1,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "olifant challenge:", err)
 		return 1
 	}
 
+	// Count remaining violations by severity.
+	var blockers, warnings, infos int
+	for _, v := range res.RemainingCiteViolations {
+		switch v.Severity {
+		case challenge.SeverityBlocker:
+			blockers++
+		case challenge.SeverityWarning:
+			warnings++
+		case challenge.SeverityInfo:
+			infos++
+		}
+	}
 	// Print metrics to stderr so stdout stays clean YAML
-	fmt.Fprintf(os.Stderr, "# elapsed=%s embed=%dms retrieve=%dms synth=%dms eval_tokens=%d tokens/sec=%.1f retrieved=%d\n",
+	fmt.Fprintf(os.Stderr,
+		"# elapsed=%s embed=%dms retrieve=%dms synth=%dms eval_tokens=%d tokens/sec=%.1f retrieved=%d attempts=%d remaining=%d (B=%d W=%d I=%d)\n",
 		res.Elapsed.Round(time.Millisecond), res.EmbedMs, res.RetrieveMs, res.SynthMs,
-		res.SynthEvalCount, res.SynthTokensSec, res.RetrievedCount)
+		res.SynthEvalCount, res.SynthTokensSec, res.RetrievedCount,
+		res.CiteAttempts, len(res.RemainingCiteViolations),
+		blockers, warnings, infos)
+	for _, v := range res.RemainingCiteViolations {
+		fmt.Fprintf(os.Stderr, "# %s [%s] %s @ %s", v.Severity, v.Code, v.Note, v.Location)
+		if v.Value != "" {
+			fmt.Fprintf(os.Stderr, "  (%q)", v.Value)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
 	// YAML goes to stdout
 	fmt.Println(res.YAMLOutput)
 	return 0

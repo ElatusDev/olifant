@@ -2,11 +2,18 @@ package challenge
 
 // challengeJSONSchema is the JSON Schema passed to Ollama's `format` field for
 // grammar-restricted decoding. The model is constrained at generation time to
-// emit only output that satisfies this schema — eliminating the entire
-// "schema escape" failure mode where the model imitates output formats from
-// retrieved chunks.
+// emit only output that satisfies this schema — eliminating the "schema escape"
+// failure mode where the model imitates output formats from retrieved chunks.
 //
-// Matches the YAML shape documented in the system prompt examples 1:1.
+// The schema also binds `verdict` ↔ `proceed` via `allOf`+`if/then` so the
+// model can't pair INVALID with proceed_directly, etc.
+//
+// Coupling rules:
+//   VALID                 → proceed_directly
+//   VALID_WITH_CAVEATS    → confirm_with_user
+//   INVALID               → abort
+//   NEEDS_CLARIFICATION   → confirm_with_user
+//   OUT_OF_SCOPE          → abort
 var challengeJSONSchema = map[string]interface{}{
 	"type":                 "object",
 	"required":             []string{"challenge"},
@@ -58,8 +65,32 @@ var challengeJSONSchema = map[string]interface{}{
 					},
 				},
 			},
+			"allOf": []interface{}{
+				ifVerdictThenProceed("VALID", "proceed_directly"),
+				ifVerdictThenProceed("VALID_WITH_CAVEATS", "confirm_with_user"),
+				ifVerdictThenProceed("INVALID", "abort"),
+				ifVerdictThenProceed("NEEDS_CLARIFICATION", "confirm_with_user"),
+				ifVerdictThenProceed("OUT_OF_SCOPE", "abort"),
+			},
 		},
 	},
+}
+
+// ifVerdictThenProceed builds one if/then clause for the challenge object's
+// allOf: if verdict == <v>, then proceed must == <p>.
+func ifVerdictThenProceed(verdict, proceed string) map[string]interface{} {
+	return map[string]interface{}{
+		"if": map[string]interface{}{
+			"properties": map[string]interface{}{
+				"verdict": map[string]interface{}{"const": verdict},
+			},
+		},
+		"then": map[string]interface{}{
+			"properties": map[string]interface{}{
+				"proceed": map[string]interface{}{"const": proceed},
+			},
+		},
+	}
 }
 
 func confirmsSchema() map[string]interface{} {

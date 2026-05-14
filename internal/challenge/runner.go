@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -24,32 +25,36 @@ const embedRequestMaxChars = 3500
 
 // Config drives one challenge run.
 type Config struct {
-	Request        string
-	OllamaURL      string
-	ChromaURL      string
-	Embedder       string
-	Synthesizer    string
-	Tenant         string
-	Database       string
-	Scopes         []string // collections to query; empty = all
-	TopN           int      // chunks per scope (default 8)
-	Temperature    float64  // 0.1 default; 0 = deterministic
-	MaxTokens      int      // synthesizer num_predict (default 1024)
-	Verbose        bool
+	Request          string
+	OllamaURL        string
+	ChromaURL        string
+	Embedder         string
+	Synthesizer      string
+	Tenant           string
+	Database         string
+	Scopes           []string // collections to query; empty = all
+	TopN             int      // chunks per scope (default 8)
+	Temperature      float64  // 0.1 default; 0 = deterministic
+	MaxTokens        int      // synthesizer num_predict (default 1024)
+	Verbose          bool
+	Validator        *CiteValidator // optional; nil disables cite validation
+	MaxValidateRetries int          // default 1 retry on cite hallucination
 }
 
 // Result is the final emitted artifact.
 type Result struct {
-	RequestText    string
-	RetrievedCount int
-	YAMLOutput     string
-	JSONValid      bool // true if the synth output parsed as JSON
-	Elapsed        time.Duration
-	EmbedMs        int64
-	RetrieveMs     int64
-	SynthMs        int64
-	SynthEvalCount int
-	SynthTokensSec float64
+	RequestText      string
+	RetrievedCount   int
+	YAMLOutput       string
+	JSONValid        bool // true if the synth output parsed as JSON
+	Elapsed          time.Duration
+	EmbedMs          int64
+	RetrieveMs       int64
+	SynthMs          int64
+	SynthEvalCount   int
+	SynthTokensSec   float64
+	CiteAttempts     int         // 1 = first try clean; 2+ = retried after violations
+	RemainingCiteViolations []Violation // unresolved after final attempt (empty = clean)
 }
 
 // Run executes the full pipeline.
@@ -153,38 +158,101 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	// 4. Synthesize — Ollama's `format` field is set to a JSON Schema so the
 	//    model is grammar-constrained to emit only schema-conformant output.
-	//    This eliminates the "schema escape" failure where the model imitates
-	//    output formats from retrieved chunks.
+	//    If a CiteValidator is wired, validate every cite resolves to a real
+	//    dictionary term or a real file path; on violation, retry once with
+	//    the violations surfaced in the prompt.
+	maxRetries := cfg.MaxValidateRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	if cfg.Validator != nil && maxRetries == 0 {
+		maxRetries = 1
+	}
+
+	gen := func(promptText string) (*ollama.GenerateResponse, error) {
+		return oc.Generate(ctx, ollama.GenerateRequest{
+			Model:  cfg.Synthesizer,
+			System: systemPrompt,
+			Prompt: promptText,
+			Format: challengeJSONSchema,
+			Options: map[string]interface{}{
+				"temperature": cfg.Temperature,
+				"num_predict": cfg.MaxTokens,
+			},
+		})
+	}
+
 	synthStart := time.Now()
-	resp, err := oc.Generate(ctx, ollama.GenerateRequest{
-		Model:  cfg.Synthesizer,
-		System: systemPrompt,
-		Prompt: prompt,
-		Format: challengeJSONSchema,
-		Options: map[string]interface{}{
-			"temperature": cfg.Temperature,
-			"num_predict": cfg.MaxTokens,
-		},
-	})
+	resp, err := gen(prompt)
 	if err != nil {
 		return nil, fmt.Errorf("synthesize: %w", err)
 	}
+	attempts := 1
+	totalEvalCount := resp.EvalCount
+	totalEvalDuration := resp.EvalDuration
+	var lastViolations []Violation
+	if cfg.Validator != nil {
+		violations, vErr := cfg.Validator.Validate(resp.Response)
+		if vErr != nil && cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "  validator parse error: %v\n", vErr)
+		}
+		lastViolations = violations
+		for HasBlockers(violations) && attempts <= maxRetries {
+			blockers := FilterBlockers(violations)
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "  validator retry #%d: %d BLOCKER + %d non-blocker\n",
+					attempts, len(blockers), len(violations)-len(blockers))
+				for _, v := range blockers {
+					fmt.Fprintf(os.Stderr, "    [%s] %s @ %s", v.Code, v.Note, v.Location)
+					if v.Value != "" {
+						fmt.Fprintf(os.Stderr, "  (%q)", v.Value)
+					}
+					fmt.Fprintln(os.Stderr)
+				}
+			}
+			retryPrompt := prompt + RetryPromptAddendum(violations, cfg.Request)
+			retryResp, rerr := gen(retryPrompt)
+			if rerr != nil {
+				if cfg.Verbose {
+					fmt.Fprintf(os.Stderr, "  retry generate failed: %v — keeping previous output\n", rerr)
+				}
+				break
+			}
+			attempts++
+			totalEvalCount += retryResp.EvalCount
+			totalEvalDuration += retryResp.EvalDuration
+			resp = retryResp
+			violations, _ = cfg.Validator.Validate(resp.Response)
+			lastViolations = violations
+			if !HasBlockers(violations) {
+				break
+			}
+		}
+	}
 	synthMs := time.Since(synthStart).Milliseconds()
 
-	// Convert JSON output to YAML for display continuity with prior runs.
+	// Convert JSON output to YAML for display continuity.
 	yamlOut, jsonValid := jsonToYAML(resp.Response)
 
+	// Build a synthetic GenerateResponse-like view for tokens/sec across all attempts.
+	tokensPerSec := 0.0
+	if totalEvalDuration > 0 && totalEvalCount > 0 {
+		tokensPerSec = float64(totalEvalCount) / (float64(totalEvalDuration) / 1e9)
+	}
+
 	return &Result{
-		RequestText:    cfg.Request,
-		RetrievedCount: len(hits),
-		YAMLOutput:     yamlOut,
-		JSONValid:      jsonValid,
-		Elapsed:        time.Since(start),
-		EmbedMs:        embedMs,
-		RetrieveMs:     retrieveMs,
-		SynthMs:        synthMs,
-		SynthEvalCount: resp.EvalCount,
-		SynthTokensSec: resp.TokensPerSec(),
+		RequestText:             cfg.Request,
+		RetrievedCount:          len(hits),
+		YAMLOutput:              yamlOut,
+		JSONValid:               jsonValid,
+		Elapsed:                 time.Since(start),
+		EmbedMs:                 embedMs,
+		RetrieveMs:              retrieveMs,
+		SynthMs:                 synthMs,
+		SynthEvalCount:          totalEvalCount,
+		SynthTokensSec:          tokensPerSec,
+		CiteAttempts:            attempts,
+		RemainingCiteViolations: lastViolations,
 	}, nil
 }
 
@@ -258,16 +326,18 @@ func buildChallengePrompt(request string, hits []retrievedHit) string {
 // templates that the model otherwise imitates, drifting away from our schema.
 const systemPrompt = `You are Olifant — a controlled-language domain expert for the ElatusDev/AkademiaPlus SaaS platform.
 
-Your job in this turn is the CHALLENGE step: read the user's request and produce a structured YAML verdict.
+Your job in this turn is the CHALLENGE step: read the user's request and produce a structured verdict (output is schema-constrained JSON, rendered to the user as YAML).
 
-BE SKEPTICAL BY DEFAULT. Your job is to FIND problems before they ship. False approvals are far more harmful than over-flagging. When in doubt, demand clarification or mark OUT_OF_SCOPE.
+BE RIGOROUS, NOT REFLEXIVE. Demand specific evidence for problems — but do NOT manufacture problems where none exist in the retrieved context. Generic concerns ("uses dependency injection", "follows naming conventions", "could use better error handling", "common security best practices") are NOT problems. They are not citations.
 
 HARD RULES:
-1. Cite ONLY artifact IDs (D###, AP##, SB-##, SI-##, AMS-##, WA-..., TBU-##, etc.) that appear VERBATIM in the RETRIEVED CONTEXT. Never invent IDs or recall them from training.
-2. The verdict MUST be exactly one of: VALID | VALID_WITH_CAVEATS | INVALID | NEEDS_CLARIFICATION | OUT_OF_SCOPE. No other words. Do not use "inconclusive", "PASSED", "accepted", "success".
-3. Output VALID YAML only. No surrounding prose. No code fences. No markdown headers.
-4. Top-level key MUST be "challenge:". Field structure MUST match the examples exactly. Do not invent fields like "challengeVerdict", "isAccepted", "feedback", "pointsAwarded", or "rationale".
-5. Use OUT_OF_SCOPE when the retrieved context does not address the request's actual topic — even if the request itself looks well-formed.
+1. EVERY value in cites[] AND every entry in applicable_rules.{standards,patterns,anti_patterns_to_avoid,decisions_to_honor} MUST appear verbatim in the RETRIEVED CONTEXT — either as an artifact ID (D###, AP##, SB-##, SI-##, AMS-##, WA-..., TBU-##, ABS-##, …) or as a literal source path (e.g., core-api/.../Foo.java#L1-L80, decisions/log.yaml#D17). NEVER invent generic categories like "magic_strings", "hardcoded_secrets", "owasp_top10", "nist_800_53", "consistent_code_style", "single_responsibility_principle", "dependency_injection". If you cannot point to a retrieved chunk that names the rule, leave the slot empty.
+
+2. INVALID requires CONCRETE EVIDENCE. You must identify a specific rule (anti-pattern ID, decision ID, standard rule ID) from the retrieved context that the request demonstrably violates, and a contradicts[] entry must cite it. Without that, the verdict is NOT INVALID — choose VALID_WITH_CAVEATS, NEEDS_CLARIFICATION, or OUT_OF_SCOPE instead. False INVALIDs are as harmful as false approvals.
+
+3. OUT_OF_SCOPE when the retrieved context does not address the request's actual topic — even if the request itself looks well-formed.
+
+4. The 'request' field MUST be the user's verbatim request, or a faithful one-sentence summary for very long inputs (code files). Do NOT put placeholders like "clarification_required" or "no_changes_required" in the 'request' field.
 
 VERDICT SEMANTICS:
 - VALID — aligns with platform rules; proceed: proceed_directly.
