@@ -37,6 +37,8 @@ func main() {
 		os.Exit(cmd.Plan(args))
 	case "run":
 		os.Exit(cmd.Run(args))
+	case "eval":
+		os.Exit(cmd.Eval(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -62,6 +64,7 @@ SUBCOMMANDS:
   turn         list | show | stats — inspect short-term event ledger
   plan         validate | split — manage prompt-plans (PSP v1)
   run          --plan <file> — execute a prompt-plan via PSP runner
+  eval         run --suite <file> — execute an eval suite battery
   version      print version
   help         this message
 

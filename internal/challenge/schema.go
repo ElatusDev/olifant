@@ -82,10 +82,19 @@ func BuildChallengeSchema(v *CiteValidator, requestScopes []string) map[string]i
 	}
 }
 
+// applicableRulesMaxItems caps any one applicable_rules slot at 8 entries.
+// Grammar-constrained decoding can otherwise drive the model into a
+// repetition loop where it picks the same enum value over and over until
+// num_predict is exhausted (observed in eval v1 with patterns="Paper-MD3"
+// × 90+). Practical platform reviews cite at most 3-5 rules per slot.
+const applicableRulesMaxItems = 8
+
 // enumArrayOrEmpty returns a schema for an array of strings where each item
 // must be drawn from `values`. If values is empty, returns an array schema
 // that accepts only an empty list (forcing the model to use [] rather than
 // inventing strings).
+//
+// Always sets maxItems so the model cannot spam the array.
 func enumArrayOrEmpty(values []string) map[string]interface{} {
 	if len(values) == 0 {
 		return map[string]interface{}{
@@ -94,7 +103,8 @@ func enumArrayOrEmpty(values []string) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
-		"type": "array",
+		"type":     "array",
+		"maxItems": applicableRulesMaxItems,
 		"items": map[string]interface{}{
 			"type": "string",
 			"enum": values,

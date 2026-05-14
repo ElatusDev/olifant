@@ -282,10 +282,20 @@ var placeholderRequests = map[string]struct{}{
 // Validate parses the synth output and returns ALL violations across the rule
 // set. Callers decide which to retry on (typically BLOCKER) and which to
 // surface (WARNING) or log (INFO).
+//
+// If the raw output cannot be parsed as JSON (truncated, malformed, repetition
+// loop), returns a BLOCKER `output_not_parseable_json` violation rather than
+// an error — so the caller's retry path picks it up.
 func (v *CiteValidator) Validate(rawJSON string) ([]Violation, error) {
 	var c challengeShape
 	if err := json.Unmarshal([]byte(rawJSON), &c); err != nil {
-		return nil, fmt.Errorf("validator: parse JSON: %w", err)
+		return []Violation{{
+			Severity: SeverityBlocker,
+			Code:     "output_not_parseable_json",
+			Location: "(root)",
+			Value:    truncateForDisplay(rawJSON, 80),
+			Note:     fmt.Sprintf("synth output not valid JSON — likely truncated or repetition loop: %v", err),
+		}}, nil
 	}
 
 	var out []Violation
@@ -446,6 +456,15 @@ func (v *CiteValidator) Validate(rawJSON string) ([]Violation, error) {
 		return out[i].Location < out[j].Location
 	})
 	return out, nil
+}
+
+// truncateForDisplay shortens a string for safe inclusion in stderr/yaml.
+func truncateForDisplay(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // HasBlockers returns true if any BLOCKER-severity violation is present.
