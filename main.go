@@ -27,6 +27,8 @@ func main() {
 		os.Exit(cmd.Corpus(args))
 	case "dictionary", "dict":
 		os.Exit(cmd.Dictionary(args))
+	case "repo":
+		os.Exit(cmd.Repo(args))
 	case "challenge":
 		os.Exit(cmd.Challenge(args))
 	case "version", "--version", "-v":
@@ -49,6 +51,7 @@ USAGE:
 SUBCOMMANDS:
   corpus       build | index — manage the knowledge-base corpus
   dictionary   bootstrap — manage the CNL dictionary
+  repo         ingest — chunk + embed source from the 7 platform repos
   challenge    challenge "<request>" — step 0: produce a verdict in YAML
   version      print version
   help         this message

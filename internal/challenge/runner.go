@@ -72,42 +72,54 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	embedMs := time.Since(embedStart).Milliseconds()
 
-	// 2. Retrieve from each scope
+	// 2. Retrieve from each scope, querying BOTH the docs collection
+	//    (corpus_<scope>) and the code collection (code_<scope>).
 	retrStart := time.Now()
 	scopes := cfg.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"universal", "backend", "webapp", "mobile", "e2e", "infra", "platform-process"}
 	}
+	// Universal scope has no code analogue (we never ingest "universal code").
+	// platform-process likewise.
+	collFamilies := []string{"corpus", "code"}
+	codeScopes := map[string]bool{
+		"backend": true, "webapp": true, "mobile": true, "e2e": true, "infra": true,
+	}
 	var hits []retrievedHit
 	for _, scope := range scopes {
-		collName := "corpus_" + strings.ReplaceAll(scope, "-", "_")
-		coll, err := cc.EnsureCollection(ctx, collName, nil)
-		if err != nil {
-			if cfg.Verbose {
-				fmt.Printf("  scope %s: collection unavailable (%v) — skipping\n", scope, err)
+		for _, family := range collFamilies {
+			if family == "code" && !codeScopes[scope] {
+				continue
 			}
-			continue
-		}
-		res, err := cc.Query(ctx, coll.ID, chroma.QueryRequest{
-			QueryEmbeddings: qEmb,
-			NResults:        cfg.TopN,
-		})
-		if err != nil {
-			if cfg.Verbose {
-				fmt.Printf("  scope %s: query failed (%v) — skipping\n", scope, err)
+			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
+			coll, err := cc.EnsureCollection(ctx, collName, nil)
+			if err != nil {
+				if cfg.Verbose {
+					fmt.Printf("  %s: collection unavailable (%v) — skipping\n", collName, err)
+				}
+				continue
 			}
-			continue
-		}
-		if len(res.Documents) == 0 {
-			continue
-		}
-		for i := range res.Documents[0] {
-			hits = append(hits, retrievedHit{
-				Doc:      res.Documents[0][i],
-				Meta:     res.Metadatas[0][i],
-				Distance: res.Distances[0][i],
-				Scope:    scope,
+			res, err := cc.Query(ctx, coll.ID, chroma.QueryRequest{
+				QueryEmbeddings: qEmb,
+				NResults:        cfg.TopN,
 			})
+			if err != nil {
+				if cfg.Verbose {
+					fmt.Printf("  %s: query failed (%v) — skipping\n", collName, err)
+				}
+				continue
+			}
+			if len(res.Documents) == 0 {
+				continue
+			}
+			for i := range res.Documents[0] {
+				hits = append(hits, retrievedHit{
+					Doc:      res.Documents[0][i],
+					Meta:     res.Metadatas[0][i],
+					Distance: res.Distances[0][i],
+					Scope:    scope + "/" + family, // disambiguate source family
+				})
+			}
 		}
 	}
 	retrieveMs := time.Since(retrStart).Milliseconds()
