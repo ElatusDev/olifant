@@ -33,6 +33,10 @@ func main() {
 		os.Exit(cmd.Challenge(args))
 	case "turn":
 		os.Exit(cmd.Turn(args))
+	case "plan":
+		os.Exit(cmd.Plan(args))
+	case "run":
+		os.Exit(cmd.Run(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -56,6 +60,8 @@ SUBCOMMANDS:
   repo         ingest — chunk + embed source from the 7 platform repos
   challenge    challenge "<request>" — step 0: produce a verdict in YAML
   turn         list | show | stats — inspect short-term event ledger
+  plan         validate | split — manage prompt-plans (PSP v1)
+  run          --plan <file> — execute a prompt-plan via PSP runner
   version      print version
   help         this message
 
