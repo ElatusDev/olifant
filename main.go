@@ -27,6 +27,8 @@ func main() {
 		os.Exit(cmd.Corpus(args))
 	case "dictionary", "dict":
 		os.Exit(cmd.Dictionary(args))
+	case "challenge":
+		os.Exit(cmd.Challenge(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -45,8 +47,9 @@ USAGE:
   olifant <subcommand> [args]
 
 SUBCOMMANDS:
-  corpus       build | diff | index — manage the knowledge-base corpus
-  dictionary   bootstrap | list — manage the CNL dictionary
+  corpus       build | index — manage the knowledge-base corpus
+  dictionary   bootstrap — manage the CNL dictionary
+  challenge    challenge "<request>" — step 0: produce a verdict in YAML
   version      print version
   help         this message
 
