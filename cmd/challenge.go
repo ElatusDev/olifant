@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,7 +13,59 @@ import (
 	"github.com/ElatusDev/olifant/internal/config"
 )
 
+// languageHintForPath maps a file extension to a short lang tag for the
+// review-prompt frame. Falls back to "" for unknown extensions.
+func languageHintForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".java":
+		return "java"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".ts":
+		return "typescript"
+	case ".tsx":
+		return "tsx"
+	case ".js":
+		return "javascript"
+	case ".jsx":
+		return "jsx"
+	case ".go":
+		return "go"
+	case ".py":
+		return "python"
+	case ".rb":
+		return "ruby"
+	case ".swift":
+		return "swift"
+	case ".rs":
+		return "rust"
+	case ".tf", ".tfvars", ".hcl":
+		return "terraform"
+	case ".sql":
+		return "sql"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".json":
+		return "json"
+	case ".xml":
+		return "xml"
+	case ".sh", ".bash", ".zsh":
+		return "shell"
+	default:
+		return ""
+	}
+}
+
 // Challenge dispatches `olifant challenge "<user request>"`.
+//
+// Two input modes:
+//
+//	olifant challenge "<NL request>"
+//	olifant challenge --file path/to/Foo.java   [optional NL suffix]
+//
+// When --file is supplied, the file content is wrapped in a "Review the
+// following code for platform compliance:" frame and used as the request +
+// retrieval query.
 func Challenge(args []string) int {
 	fs := flag.NewFlagSet("challenge", flag.ExitOnError)
 	scopes := fs.String("scopes", "", "comma-separated scope filter (default: all)")
@@ -22,15 +75,36 @@ func Challenge(args []string) int {
 	timeoutSec := fs.Int("timeout", 300, "overall timeout in seconds")
 	verbose := fs.Bool("v", false, "verbose retrieval log")
 	synth := fs.String("synth", "", "synthesizer model override")
+	codeFile := fs.String("file", "", "code file to review (frames input as review-request)")
 	_ = fs.Parse(args)
 
-	// User request: everything after flags, joined by spaces
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "olifant challenge: missing request — usage: olifant challenge \"<request>\"")
-		return 2
+	var request string
+	if *codeFile != "" {
+		body, err := os.ReadFile(*codeFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "olifant challenge: read %s: %v\n", *codeFile, err)
+			return 2
+		}
+		lang := languageHintForPath(*codeFile)
+		suffix := ""
+		if rest := fs.Args(); len(rest) > 0 {
+			suffix = "\n\nAdditional context: " + strings.Join(rest, " ")
+		}
+		// Note: the synthesizer sees the full body. The embedder sees a
+		// 3500-char head (single Embed call inside Run() is capped already).
+		request = fmt.Sprintf(
+			"Review the following %s code for ElatusDev/AkademiaPlus platform compliance.\n"+
+				"File: %s\n\n"+
+				"```%s\n%s\n```%s",
+			lang, *codeFile, lang, strings.TrimRight(string(body), "\n"), suffix)
+	} else {
+		rest := fs.Args()
+		if len(rest) == 0 {
+			fmt.Fprintln(os.Stderr, "olifant challenge: missing request — usage: olifant challenge \"<request>\" OR olifant challenge --file <path>")
+			return 2
+		}
+		request = strings.TrimSpace(strings.Join(rest, " "))
 	}
-	request := strings.TrimSpace(strings.Join(rest, " "))
 	if request == "" {
 		fmt.Fprintln(os.Stderr, "olifant challenge: empty request")
 		return 2
