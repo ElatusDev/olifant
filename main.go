@@ -39,6 +39,8 @@ func main() {
 		os.Exit(cmd.Run(args))
 	case "eval":
 		os.Exit(cmd.Eval(args))
+	case "validate":
+		os.Exit(cmd.Validate(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -65,6 +67,7 @@ SUBCOMMANDS:
   plan         validate | split — manage prompt-plans (PSP v1)
   run          --plan <file> — execute a prompt-plan via PSP runner
   eval         run --suite <file> — execute an eval suite battery
+  validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
   version      print version
   help         this message
 
