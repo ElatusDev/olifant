@@ -75,13 +75,19 @@ func (c *Client) Embed(ctx context.Context, model string, inputs []string) ([][]
 }
 
 // GenerateRequest matches the /api/generate body for non-streamed calls.
+//
+// Format can be:
+//   - nil / omitted   — free-form output
+//   - "json"          — model must emit any valid JSON
+//   - map[string]any  — a JSON Schema; model is constrained to emit conformant
+//                       output via grammar-restricted decoding (Ollama ≥ 0.5).
 type GenerateRequest struct {
 	Model   string                 `json:"model"`
 	Prompt  string                 `json:"prompt"`
 	System  string                 `json:"system,omitempty"`
 	Stream  bool                   `json:"stream"` // always false here
 	Options map[string]interface{} `json:"options,omitempty"`
-	Format  string                 `json:"format,omitempty"` // "json" forces JSON-only output
+	Format  interface{}            `json:"format,omitempty"`
 	Suffix  string                 `json:"suffix,omitempty"`
 }
 

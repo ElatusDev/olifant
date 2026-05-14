@@ -5,6 +5,7 @@ package challenge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,7 +13,14 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/chroma"
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"gopkg.in/yaml.v3"
 )
+
+// embedRequestMaxChars caps the request before it's sent to the embedder.
+// nomic-embed-text via Ollama rejects inputs above ~5000 chars regardless of
+// the `truncate` flag, so we cap defensively to avoid losing a whole call.
+// The synthesizer still sees the full request in its prompt.
+const embedRequestMaxChars = 3500
 
 // Config drives one challenge run.
 type Config struct {
@@ -35,6 +43,7 @@ type Result struct {
 	RequestText    string
 	RetrievedCount int
 	YAMLOutput     string
+	JSONValid      bool // true if the synth output parsed as JSON
 	Elapsed        time.Duration
 	EmbedMs        int64
 	RetrieveMs     int64
@@ -61,9 +70,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	oc := ollama.New(cfg.OllamaURL)
 	cc := chroma.New(cfg.ChromaURL, cfg.Tenant, cfg.Database)
 
-	// 1. Embed the request
+	// 1. Embed the request (capped — long --file inputs would otherwise
+	//    exceed the embedder context window).
 	embedStart := time.Now()
-	qEmb, err := oc.Embed(ctx, cfg.Embedder, []string{cfg.Request})
+	qEmb, err := oc.Embed(ctx, cfg.Embedder, []string{capChars(cfg.Request, embedRequestMaxChars)})
 	if err != nil {
 		return nil, fmt.Errorf("embed request: %w", err)
 	}
@@ -141,12 +151,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// 3. Build prompt
 	prompt := buildChallengePrompt(cfg.Request, hits)
 
-	// 4. Synthesize
+	// 4. Synthesize — Ollama's `format` field is set to a JSON Schema so the
+	//    model is grammar-constrained to emit only schema-conformant output.
+	//    This eliminates the "schema escape" failure where the model imitates
+	//    output formats from retrieved chunks.
 	synthStart := time.Now()
 	resp, err := oc.Generate(ctx, ollama.GenerateRequest{
 		Model:  cfg.Synthesizer,
 		System: systemPrompt,
 		Prompt: prompt,
+		Format: challengeJSONSchema,
 		Options: map[string]interface{}{
 			"temperature": cfg.Temperature,
 			"num_predict": cfg.MaxTokens,
@@ -157,10 +171,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	synthMs := time.Since(synthStart).Milliseconds()
 
+	// Convert JSON output to YAML for display continuity with prior runs.
+	yamlOut, jsonValid := jsonToYAML(resp.Response)
+
 	return &Result{
 		RequestText:    cfg.Request,
 		RetrievedCount: len(hits),
-		YAMLOutput:     strings.TrimSpace(resp.Response),
+		YAMLOutput:     yamlOut,
+		JSONValid:      jsonValid,
 		Elapsed:        time.Since(start),
 		EmbedMs:        embedMs,
 		RetrieveMs:     retrieveMs,
@@ -168,6 +186,32 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		SynthEvalCount: resp.EvalCount,
 		SynthTokensSec: resp.TokensPerSec(),
 	}, nil
+}
+
+// jsonToYAML parses model output as JSON and re-marshals as YAML. Returns
+// (originalString, false) if parsing fails — useful for debugging.
+func jsonToYAML(raw string) (string, bool) {
+	var data interface{}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return strings.TrimSpace(raw), false
+	}
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return strings.TrimSpace(raw), false
+	}
+	return strings.TrimRight(string(out), "\n"), true
+}
+
+// capChars trims s to maxChars at a UTF-8 boundary.
+func capChars(s string, maxChars int) string {
+	if len(s) <= maxChars {
+		return s
+	}
+	end := maxChars
+	for end > 0 && (s[end]&0xC0) == 0x80 {
+		end--
+	}
+	return s[:end]
 }
 
 // retrievedHit is one Chroma result row, package-shared so Run() and
