@@ -35,6 +35,8 @@ func main() {
 		os.Exit(cmd.Turn(args))
 	case "plan":
 		os.Exit(cmd.Plan(args))
+	case "prompt":
+		os.Exit(cmd.Prompt(args))
 	case "run":
 		os.Exit(cmd.Run(args))
 	case "eval":
@@ -67,6 +69,7 @@ SUBCOMMANDS:
   challenge    challenge "<request>" — step 0: produce a verdict in YAML
   turn         list | show | stats — inspect short-term event ledger
   plan         validate | split — manage prompt-plans (PSP v1)
+  prompt       build "<goal>" — generate a PSP plan from a goal via RAG + synth
   run          --plan <file> — execute a prompt-plan via PSP runner
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit

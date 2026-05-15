@@ -16,3 +16,6 @@ go.work.sum
 # Profiling / coverage
 *.prof
 coverage.out
+
+# Generated plans from `olifant prompt build` — runtime artefacts, not source
+/plans/
