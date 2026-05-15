@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/history"
+	"github.com/ElatusDev/olifant/internal/chroma"
 )
 
 // History dispatches `olifant history <scan|...>`. Phase 1 ships
@@ -27,6 +28,8 @@ func History(args []string) int {
 		return historyScan(rest)
 	case "index":
 		return historyIndex(rest)
+	case "stats":
+		return historyStats(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant history: unknown action %q\n", action)
 		return 2
@@ -358,5 +361,100 @@ func historyIndex(args []string) int {
 		}
 	}
 
+	return 0
+}
+
+// historyStats reports the current state of the training-data
+// pipeline: manifest contents (which SHAs olifant has seen per
+// repo) and ChromaDB collection sizes (how many chunks are indexed
+// per scope). Read-only — never mutates the manifest or any
+// collection.
+func historyStats(args []string) int {
+	fs := flag.NewFlagSet("history stats", flag.ExitOnError)
+	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect)")
+	manifestPath := fs.String("manifest", "", "manifest path (default: <kb-root>/short-term/history-manifest.yaml)")
+	chromaURL := fs.String("chroma-url", "", "ChromaDB base URL (empty → skip the collection-size probe)")
+	chromaTenant := fs.String("chroma-tenant", "default_tenant", "ChromaDB tenant")
+	chromaDB := fs.String("chroma-database", "default_database", "ChromaDB database")
+	timeoutSec := fs.Int("timeout", 30, "overall timeout in seconds")
+	_ = fs.Parse(args)
+
+	root := *kbRoot
+	if root == "" {
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			root = filepath.Dir(found)
+		}
+	}
+	manPath := *manifestPath
+	if manPath == "" && root != "" {
+		manPath = filepath.Join(root, "short-term", "history-manifest.yaml")
+	}
+
+	fmt.Println("=== manifest ===")
+	if manPath == "" {
+		fmt.Println("  (no manifest path resolved — pass --manifest or --kb-root)")
+	} else if m, err := history.LoadManifest(manPath); err != nil {
+		fmt.Printf("  manifest: ERROR (%v)\n", err)
+	} else if len(m.Repos) == 0 {
+		fmt.Printf("  manifest: EMPTY (%s)\n", manPath)
+		fmt.Println("            run `olifant history scan` to populate")
+	} else {
+		fmt.Printf("  path:      %s\n", manPath)
+		fmt.Printf("  last_run:  %s (since-floor %s)\n", m.LastRunAt, m.SinceFloor)
+		fmt.Println("  per-repo last-seen:")
+		names := make([]string, 0, len(m.Repos))
+		for _, r := range m.Repos {
+			names = append(names, r.Name)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			for _, r := range m.Repos {
+				if r.Name == n {
+					short := r.LastSHA
+					if len(short) > 7 {
+						short = short[:7]
+					}
+					fmt.Printf("    %-22s sha=%s  delta=%d commits / %d snapshots\n",
+						r.Name, short, r.LastRun.CommitsAdded, r.LastRun.SnapshotsAdded)
+					break
+				}
+			}
+		}
+	}
+
+	if *chromaURL == "" {
+		fmt.Println()
+		fmt.Println("=== chromadb collections ===")
+		fmt.Println("  (skipped — pass --chroma-url to probe collection sizes)")
+		return 0
+	}
+
+	fmt.Println()
+	fmt.Println("=== chromadb collections ===")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
+	defer cancel()
+	cc := chroma.New(*chromaURL, *chromaTenant, *chromaDB)
+	if _, err := cc.Heartbeat(ctx); err != nil {
+		fmt.Printf("  chroma: UNREACHABLE (%v)\n", err)
+		return 0
+	}
+	scopes := []string{"backend", "webapp", "mobile", "e2e", "infra"}
+	families := []string{"history", "code_history"}
+	for _, family := range families {
+		for _, scope := range scopes {
+			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
+			coll, err := cc.EnsureCollection(ctx, collName, nil)
+			if err != nil {
+				fmt.Printf("  %-32s ERROR (%v)\n", collName, err)
+				continue
+			}
+			n, err := cc.Count(ctx, coll.ID)
+			if err != nil {
+				fmt.Printf("  %-32s ERROR counting (%v)\n", collName, err)
+				continue
+			}
+			fmt.Printf("  %-32s %d chunks\n", collName, n)
+		}
+	}
 	return 0
 }

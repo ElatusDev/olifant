@@ -117,6 +117,20 @@ type UpsertRequest struct {
 	Metadatas  []map[string]interface{} `json:"metadatas,omitempty"`
 }
 
+// Count returns the number of chunks currently stored in the named
+// collection. Used by `olifant history stats` and similar
+// read-only probes that want a row count without pulling any
+// content back.
+func (c *Client) Count(ctx context.Context, collectionID string) (int64, error) {
+	path := fmt.Sprintf("/api/v2/tenants/%s/databases/%s/collections/%s/count",
+		url.PathEscape(c.Tenant), url.PathEscape(c.Database), url.PathEscape(collectionID))
+	var n int64
+	if err := c.do(ctx, http.MethodGet, path, nil, &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // Upsert performs an idempotent insert-or-update on the collection.
 // Use small batches (≤ 256 vectors) — large batches can exceed HTTP timeouts.
 func (c *Client) Upsert(ctx context.Context, collectionID string, req UpsertRequest) error {
