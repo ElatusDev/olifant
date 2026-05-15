@@ -29,6 +29,15 @@ func New(baseURL string) *Client {
 	}
 }
 
+// CloseIdle drops all idle keep-alive connections from the underlying
+// HTTP transport's pool. Call after a request failure suspected to be
+// caused by a stale connection (read-timeout mid-response, EOF, etc.)
+// so the next request reaches the server over a fresh TCP connection
+// instead of reusing the half-dead one. Cheap; safe to call always.
+func (c *Client) CloseIdle() {
+	c.HTTP.CloseIdleConnections()
+}
+
 // Version returns the Ollama server version (smoke-test).
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var out struct {

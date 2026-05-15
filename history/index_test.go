@@ -1,8 +1,18 @@
 package history
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/ElatusDev/olifant/internal/chroma"
+	"github.com/ElatusDev/olifant/internal/corpus"
+	"github.com/ElatusDev/olifant/internal/ollama"
 )
 
 func TestChunkID_deterministicAndPrefixed(t *testing.T) {
@@ -133,6 +143,243 @@ func TestCapChars_truncatesAtUTF8Boundary(t *testing.T) {
 	// Must be valid UTF-8 — no half-multibyte rune at the tail.
 	for _, r := range out {
 		_ = r
+	}
+}
+
+// closeTrackingTransport wraps an http.RoundTripper and counts
+// CloseIdleConnections() calls, so tests can assert the indexer
+// dropped its connection pool after a batch failure.
+type closeTrackingTransport struct {
+	inner  http.RoundTripper
+	closes atomic.Int32
+}
+
+func (t *closeTrackingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return t.inner.RoundTrip(r)
+}
+
+func (t *closeTrackingTransport) CloseIdleConnections() {
+	t.closes.Add(1)
+	type ci interface{ CloseIdleConnections() }
+	if c, ok := t.inner.(ci); ok {
+		c.CloseIdleConnections()
+	}
+}
+
+// chunkForBody returns a minimal corpus.Chunk with a deterministic ID
+// suitable for embedAndUpsert. Body length is whatever the caller passes;
+// the rest of the metadata is just enough to make the upsert request
+// shaped correctly.
+func chunkForBody(id, body string) corpus.Chunk {
+	return corpus.Chunk{
+		ChunkID: "snap-" + id,
+		Source:  "test@" + id,
+		Scope:   "test",
+		DocType: "file-snapshot",
+		Title:   "test/" + id,
+		Body:    body,
+	}
+}
+
+// repeatRune returns a string of n runes of r — cheaper than building
+// a strings.Builder for fixed-size test inputs.
+func repeatRune(r rune, n int) string {
+	return strings.Repeat(string(r), n)
+}
+
+// embedderMaxChars is the package constant; regression tests assert
+// it stays under nomic-embed-text's 2048-token default context.
+func TestEmbedderMaxChars_underNomicContext(t *testing.T) {
+	if embedderMaxChars > 2048 {
+		t.Errorf("embedderMaxChars = %d exceeds nomic-embed-text's 2048-token default context; should be <= 2048", embedderMaxChars)
+	}
+	if embedderMaxChars != 2000 {
+		t.Errorf("embedderMaxChars = %d, want 2000 (per 2026-05-15 history-track P5 regression)", embedderMaxChars)
+	}
+}
+
+// TestEmbedAndUpsert_capsOversizeInputs is the A regression: a chunk
+// whose Body would have busted nomic's 2048-token context window under
+// the old 3500-char cap must now be capped to embedderMaxChars and
+// embed successfully. The stand-in Ollama server enforces the cap
+// strictly: any input longer than 2048 chars returns HTTP 400 with the
+// real-Ollama error string, mirroring what we observed in P5.
+func TestEmbedAndUpsert_capsOversizeInputs(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		sawInput string // longest input we observed
+	)
+
+	ollamaSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		var req ollama.EmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		for _, in := range req.Input {
+			if len(in) > len(sawInput) {
+				sawInput = in
+			}
+		}
+		mu.Unlock()
+		for _, in := range req.Input {
+			if len(in) > 2048 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"input length exceeds maximum context length"}`))
+				return
+			}
+		}
+		emb := make([][]float32, len(req.Input))
+		for i := range emb {
+			emb[i] = []float32{0.1, 0.2, 0.3}
+		}
+		_ = json.NewEncoder(w).Encode(ollama.EmbedResponse{Embeddings: emb})
+	}))
+	defer ollamaSrv.Close()
+
+	upserted := 0
+	chromaSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/upsert") {
+			var req chroma.UpsertRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			upserted += len(req.IDs)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer chromaSrv.Close()
+
+	oc := ollama.New(ollamaSrv.URL)
+	cc := chroma.New(chromaSrv.URL, "", "")
+
+	// 3000-char body: would have been capped to 3500 (still >2048 →
+	// fail) under the old constant; should be capped to 2000 now.
+	chunks := []corpus.Chunk{chunkForBody("oversize", repeatRune('a', 3000))}
+
+	ups, _, err := embedAndUpsert(context.Background(), oc, cc, "test-coll", "nomic-embed-text", chunks, 32, false)
+	if err != nil {
+		t.Fatalf("embedAndUpsert: %v", err)
+	}
+	if ups != 1 {
+		t.Errorf("upserted = %d, want 1", ups)
+	}
+	if upserted != 1 {
+		t.Errorf("chroma saw %d upserts, want 1", upserted)
+	}
+	if len(sawInput) > embedderMaxChars {
+		t.Errorf("Ollama received input of %d chars, want <= %d (cap not applied)", len(sawInput), embedderMaxChars)
+	}
+}
+
+// TestEmbedAndUpsert_resetsConnPoolOnBatchFailure is the B regression:
+// when the batched /api/embed call fails (simulating a Tailscale read-
+// timeout), embedAndUpsert must (1) call CloseIdleConnections() on the
+// Ollama client's transport before the per-chunk retry, and (2) recover
+// every chunk in the batch via the single-input retry. P5 lost 30
+// chunks because the per-chunk retry reused the timed-out connection.
+func TestEmbedAndUpsert_resetsConnPoolOnBatchFailure(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		embedCalls  int
+		batchCalls  int
+		singleCalls int
+	)
+
+	ollamaSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		var req ollama.EmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		embedCalls++
+		switch {
+		case len(req.Input) > 1:
+			batchCalls++
+		case len(req.Input) == 1:
+			singleCalls++
+		}
+		isBatch := len(req.Input) > 1
+		mu.Unlock()
+
+		if isBatch {
+			// Simulate the P5 Tailscale failure mode: server-side
+			// error on the multi-input batch. The per-chunk retry
+			// (single-input) below succeeds.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"read tcp: i/o timeout"}`))
+			return
+		}
+		emb := make([][]float32, len(req.Input))
+		for i := range emb {
+			emb[i] = []float32{0.1, 0.2, 0.3}
+		}
+		_ = json.NewEncoder(w).Encode(ollama.EmbedResponse{Embeddings: emb})
+	}))
+	defer ollamaSrv.Close()
+
+	upserted := 0
+	chromaSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/upsert") {
+			var req chroma.UpsertRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			upserted += len(req.IDs)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer chromaSrv.Close()
+
+	oc := ollama.New(ollamaSrv.URL)
+	tr := &closeTrackingTransport{inner: http.DefaultTransport}
+	oc.HTTP.Transport = tr
+
+	cc := chroma.New(chromaSrv.URL, "", "")
+
+	chunks := []corpus.Chunk{
+		chunkForBody("a", "alpha"),
+		chunkForBody("b", "beta"),
+		chunkForBody("c", "gamma"),
+	}
+
+	ups, _, err := embedAndUpsert(context.Background(), oc, cc, "test-coll", "nomic-embed-text", chunks, 32, false)
+	if err != nil {
+		t.Fatalf("embedAndUpsert: %v", err)
+	}
+	if ups != len(chunks) {
+		t.Errorf("upserted = %d, want %d (every chunk should recover via per-chunk retry)", ups, len(chunks))
+	}
+	if got := tr.closes.Load(); got != 1 {
+		t.Errorf("CloseIdleConnections called %d times, want 1 (must reset pool exactly once before per-chunk retry)", got)
+	}
+	if batchCalls != 1 {
+		t.Errorf("batch /api/embed calls = %d, want 1", batchCalls)
+	}
+	if singleCalls != len(chunks) {
+		t.Errorf("single-input /api/embed calls = %d, want %d", singleCalls, len(chunks))
+	}
+	if embedCalls != 1+len(chunks) {
+		t.Errorf("total /api/embed calls = %d, want %d", embedCalls, 1+len(chunks))
+	}
+	if upserted != len(chunks) {
+		t.Errorf("chroma saw %d upserts, want %d", upserted, len(chunks))
 	}
 }
 
