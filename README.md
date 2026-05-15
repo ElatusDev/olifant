@@ -38,6 +38,33 @@ Flags:
 ### `olifant corpus diff` — not yet implemented
 ### `olifant corpus index` — not yet implemented (waits on ChromaDB)
 
+### `olifant prompt build "<goal>"`
+
+Decomposes a high-level goal into a PSP v1 plan via embed → retrieve → synth.
+Walks corpus + code + history + code_history collections (all scopes by
+default), produces a JSON plan via grammar-constrained decoding, and writes
+`plans/<plan_id>.yaml`. Auto-splits via `psp.Split()` when the synthesizer
+emits more than `psp.MaxStepsPerPlan` (25) steps.
+
+```
+./bin/olifant prompt build "add a /healthz endpoint to elatus-rest-api with multitenancy"
+./bin/olifant plan validate plans/<emitted-plan-id>.yaml
+```
+
+Flags:
+- `--scope` comma-separated scope filter (default: all 7 scopes)
+- `--top` chunks to retrieve globally after distance sort (default: 8)
+- `--temperature` synthesizer temperature (default: 0.1)
+- `--max-tokens` synthesizer num_predict (default: 1024)
+- `--timeout` overall timeout in seconds (default: 600)
+- `--synth` synthesizer model override
+- `--out` output directory (default: `plans`)
+- `--no-record` skip short-term turn record
+- `-v` verbose retrieval + synth log
+
+Emits one path per line on stdout (multiple for split plans); metrics +
+warnings on stderr.
+
 ## Hybrid execution (Claude Code subprocess + local Ollama)
 
 The PSP runner supports routing each step to one of two executors:
