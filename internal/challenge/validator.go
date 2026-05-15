@@ -488,6 +488,11 @@ func FilterBlockers(vs []Violation) []Violation {
 	return out
 }
 
+// Resolves is the public counterpart to resolves() — used by other packages
+// (e.g., validate.AssessmentValidator) that need the same cite-resolution
+// logic without re-implementing the dictionary/path lookup.
+func (v *CiteValidator) Resolves(c string) bool { return v.resolves(c) }
+
 // resolves returns true if `c` is a known term from any abstraction layer
 // (dictionary, concepts, constraints, glossary) OR a real platform file
 // path (with optional #anchor or #Lstart-Lend suffix).
