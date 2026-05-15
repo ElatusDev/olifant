@@ -14,12 +14,51 @@ import (
 )
 
 // RunnerConfig drives a single plan execution.
+//
+// Routing: when Executors is non-empty, each step is dispatched to
+// Executors[step.ResolvedExecutor()]. When Executors is empty (or the
+// step's executor is not registered), the runner falls back to Executor.
+// This preserves backward compatibility with single-executor callers.
 type RunnerConfig struct {
 	Executor   Executor
+	Executors  map[string]Executor // optional per-kind routing table (v1+)
 	Plan       *Plan
 	KBRoot     string // for short-term writes + signal resolution
 	Verbose    bool
 	TurnWriter func(record map[string]interface{}) error // optional hook for ledger writes
+}
+
+// pickExecutor resolves the executor for a step. Returns an error if the
+// step requested a specific executor that is not registered.
+func (cfg RunnerConfig) pickExecutor(step Step) (Executor, error) {
+	if len(cfg.Executors) == 0 {
+		if cfg.Executor == nil {
+			return nil, fmt.Errorf("no executor configured")
+		}
+		return cfg.Executor, nil
+	}
+	kind := step.ResolvedExecutor()
+	if e, ok := cfg.Executors[kind]; ok {
+		return e, nil
+	}
+	// Step asked for a specific executor that's not registered.
+	// If the step is using the default ("local") and cfg.Executor is set,
+	// fall back. Otherwise it's a configuration error and we must abort
+	// rather than silently routing to the wrong model.
+	if step.Executor == "" && cfg.Executor != nil {
+		return cfg.Executor, nil
+	}
+	return nil, fmt.Errorf("step %q requests executor %q which is not registered (available: %v)",
+		step.ID, kind, executorKinds(cfg.Executors))
+}
+
+func executorKinds(m map[string]Executor) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // RunResult is what cmd/run.go surfaces after Run completes.
@@ -46,8 +85,13 @@ func Run(ctx context.Context, cfg RunnerConfig) (*RunResult, error) {
 
 	// 1. SYN handshake (in-process, but explicit for spec fidelity)
 	log(StateListen, fmt.Sprintf("plan loaded — %d steps, goal=%q", len(cfg.Plan.Steps), cfg.Plan.Goal))
-	log(StateSynSent, "SYN dispatched to executor "+cfg.Executor.ID())
+	log(StateSynSent, fmt.Sprintf("SYN dispatched to executors=%s", executorsSummary(cfg)))
 	log(StateEstablished, "SYN_ACK received; session open")
+
+	// Pre-flight: every executor a step asks for must be registered.
+	if verr := validateExecutorRouting(cfg); verr != nil {
+		return nil, verr
+	}
 
 	// 2. Topo-sort steps respecting depends_on
 	ordered, err := topoSort(cfg.Plan.Steps)
@@ -157,8 +201,17 @@ func runStep(
 		log(StateAwaitingAck, fmt.Sprintf("attempt=%d", attempt))
 
 		prompt := buildStepPrompt(step, priorOutputs, attempt, lastViolations)
+		executor, perr := cfg.pickExecutor(step)
+		if perr != nil {
+			result.State = StateClosedError
+			result.CompletedAt = time.Now()
+			return result, fmt.Errorf("executor routing: %w", perr)
+		}
+		if attempt == 1 {
+			log(StateAwaitingAck, fmt.Sprintf("routing seq=%d → executor=%s (%s)", seq, step.ResolvedExecutor(), executor.ID()))
+		}
 		execStart := time.Now()
-		resp, eerr := cfg.Executor.Execute(ctx, prompt, step.ExpectedOutput.Schema)
+		resp, eerr := executor.Execute(ctx, prompt, step.ExpectedOutput.Schema)
 		execTimeMs := time.Since(execStart).Milliseconds()
 
 		if eerr != nil {
@@ -174,7 +227,11 @@ func runStep(
 		result.EvalTokens += resp.EvalTokens
 		result.StepInputTokens += resp.PromptTokens
 		result.StepOutputTokens += resp.OutputTokens
+		result.CacheCreationTokens += resp.CacheCreationTokens
+		result.CacheReadTokens += resp.CacheReadTokens
 		result.ExecTimeMs += execTimeMs
+		result.ExecutorKind = step.ResolvedExecutor()
+		result.ExecutorID = executor.ID()
 
 		log(StateValidating, fmt.Sprintf("seq=%d attempt=%d", seq, attempt))
 		violations := validateStep(step, resp.Output)
@@ -350,6 +407,34 @@ func topoSort(steps []Step) ([]Step, error) {
 	return ordered, nil
 }
 
+// executorsSummary renders the registered executors for handshake logging.
+// Falls back to the single Executor when Executors is empty.
+func executorsSummary(cfg RunnerConfig) string {
+	if len(cfg.Executors) > 0 {
+		parts := make([]string, 0, len(cfg.Executors))
+		for _, k := range executorKinds(cfg.Executors) {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, cfg.Executors[k].ID()))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	}
+	if cfg.Executor != nil {
+		return cfg.Executor.ID()
+	}
+	return "(none)"
+}
+
+// validateExecutorRouting confirms every step's requested executor is
+// resolvable before the plan starts. Without this, a misrouted step would
+// fail mid-execution after spending tokens on prior steps.
+func validateExecutorRouting(cfg RunnerConfig) error {
+	for _, step := range cfg.Plan.Steps {
+		if _, err := cfg.pickExecutor(step); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Validate runs static checks on a plan before execution. Per psp-v1.md §6.
 func Validate(p *Plan) error {
 	if p == nil {
@@ -421,12 +506,16 @@ func makeAggregate(
 	}
 	for _, sr := range steps {
 		agg.StepSummaries = append(agg.StepSummaries, StepSummary{
-			Seq:        sr.Seq,
-			StepID:     sr.StepID,
-			State:      sr.State,
-			Attempts:   sr.Attempts,
-			ElapsedMs:  sr.ExecTimeMs,
-			EvalTokens: sr.EvalTokens,
+			Seq:                 sr.Seq,
+			StepID:              sr.StepID,
+			State:               sr.State,
+			Attempts:            sr.Attempts,
+			ElapsedMs:           sr.ExecTimeMs,
+			EvalTokens:          sr.EvalTokens,
+			ExecutorKind:        sr.ExecutorKind,
+			ExecutorID:          sr.ExecutorID,
+			CacheCreationTokens: sr.CacheCreationTokens,
+			CacheReadTokens:     sr.CacheReadTokens,
 		})
 	}
 	return agg

@@ -1,0 +1,81 @@
+# Hybrid smoke plan — exercises both LocalExecutor (Ollama) and
+# ClaudeCodeExecutor (claude CLI subprocess). Three steps, small JSON
+# schemas so the runtime stays under a few seconds per step.
+#
+# Run: ./bin/olifant run --plan plans/hybrid-smoke.yaml -v
+#
+# Required infra:
+#   - Ollama reachable at OLIFANT_OLLAMA_URL (default tailnet IP)
+#   - `claude` binary on PATH, authenticated via `claude /login`
+#     (no API key needed; uses your Claude subscription)
+plan_id: hybrid-smoke-2026-05-15
+goal: "Smoke-test the hybrid executor: local lookup → claude reasoning → local synthesis."
+created_at: "2026-05-15"
+created_by: "olifant-track-3"
+steps:
+  - id: classify_request
+    name: "Classify a hypothetical platform request (local)"
+    description: |
+      A platform user has asked: "Should we add a new TenantScoped entity for invoices?"
+      Emit a one-word verdict from the allowed enum and a 1-sentence reason.
+    executor: local
+    expected_output:
+      schema:
+        type: object
+        required: [verdict, reason]
+        additionalProperties: false
+        properties:
+          verdict:
+            type: string
+            enum: [aligned, needs_review, blocked]
+          reason:
+            type: string
+            minLength: 4
+    retry_policy:
+      max_attempts: 2
+      backoff_ms: 500
+
+  - id: synthesize_rationale
+    name: "Expand the verdict into a 3-bullet rationale (claude)"
+    description: |
+      Given the verdict from classify_request, list three concrete reasons
+      that support it. Each reason should reference one of: composite-key
+      pattern, multi-tenant isolation, schema migration cost. Keep each
+      reason under 25 words.
+    depends_on: [classify_request]
+    executor: claude
+    expected_output:
+      schema:
+        type: object
+        required: [reasons]
+        additionalProperties: false
+        properties:
+          reasons:
+            type: array
+            minItems: 3
+            maxItems: 3
+            items:
+              type: string
+    retry_policy:
+      max_attempts: 2
+      backoff_ms: 1000
+
+  - id: final_summary
+    name: "Local synthesizer summarizes the chain"
+    description: |
+      You have a verdict and three rationale bullets from the prior steps.
+      Emit a single one-sentence summary suitable for an engineering ticket.
+    depends_on: [classify_request, synthesize_rationale]
+    executor: local
+    expected_output:
+      schema:
+        type: object
+        required: [summary]
+        additionalProperties: false
+        properties:
+          summary:
+            type: string
+            minLength: 10
+    retry_policy:
+      max_attempts: 2
+      backoff_ms: 500

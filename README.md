@@ -38,6 +38,69 @@ Flags:
 ### `olifant corpus diff` — not yet implemented
 ### `olifant corpus index` — not yet implemented (waits on ChromaDB)
 
+## Hybrid execution (Claude Code subprocess + local Ollama)
+
+The PSP runner supports routing each step to one of two executors:
+
+- `local` — Ollama-hosted synthesizer on the Olifant Mac mini (default for all steps).
+- `claude` — `claude` CLI subprocess (Claude Code), authenticated against your
+  existing Claude subscription. For steps that benefit from stronger reasoning.
+
+Enable Claude by having the `claude` binary on PATH (already installed if
+you're using Claude Code). No API key needed — the CLI handles auth via the
+keychain/OAuth tokens from `claude /login`.
+
+Optional env overrides:
+
+```bash
+export OLIFANT_CLAUDE_BINARY=/opt/homebrew/bin/claude   # if not on PATH
+export OLIFANT_CLAUDE_MODEL=claude-sonnet-4-6           # or opus-4-7, haiku-4-5
+export OLIFANT_CLAUDE_EFFORT=high                       # low|medium|high|xhigh|max
+export OLIFANT_CLAUDE_TIMEOUT=120                       # seconds per step
+```
+
+Per-step routing lives in the plan YAML:
+
+```yaml
+steps:
+  - id: lookup_step
+    description: Resolve cite paths against the dictionary.
+    executor: local                # cheap lookup → Ollama
+    expected_output: { schema: { type: object } }
+
+  - id: reasoning_step
+    description: Audit code change against the standards catalogue.
+    executor: claude               # multi-step reasoning → Claude
+    expected_output: { schema: { type: object } }
+
+  - id: default_step
+    description: Implicit local executor — no field needed.
+    expected_output: { schema: { type: object } }
+```
+
+Plans authored before this change keep working: an unset `executor:` field is
+treated as `local`. Plans that reference `claude` without the `claude` binary
+available abort at pre-flight with a clear error — they never start executing.
+
+Cost: Claude Code calls are billed against your Claude subscription
+(no per-call API charges). Claude Code performs its own prompt caching
+internally; the cache stats are surfaced on each step's StepResult via
+`cache_creation_tokens` / `cache_read_tokens` (read from
+`result.usage.cache_*_input_tokens` in the CLI's JSON output). The
+`cache totals` line in `olifant run -v` shows the plan-wide hit rate.
+
+Verbose smoke output (per step):
+
+```
+  step 1 classify_request  executor=local   id=qwen2.5:14b-instruct-q6_K  elapsed=12526ms  cache(rw)=0/0
+  step 2 synthesize        executor=claude  id=claude-sonnet-4-6          elapsed=2103ms   cache(rw)=3502/4910
+  step 3 final_summary     executor=local   id=qwen2.5:14b-instruct-q6_K  elapsed=2892ms   cache(rw)=0/0
+  cache totals — read=3502 created=4910 hit_rate=41.6%
+```
+
+The cost-design rationale is captured in
+`knowledge-base/architecture/olifant-training-plan.md` §Hybrid mode.
+
 ## Layout
 
 ```

@@ -1,0 +1,47 @@
+# Backward-compat smoke — proves a plan without any `executor:` fields
+# still runs against LocalExecutor, exactly as plans authored before
+# Track 3 did. Mirrors the hybrid plan minus the per-step routing.
+plan_id: local-only-smoke-2026-05-15
+goal: "Backward-compat smoke: every step should route to LocalExecutor by default."
+created_at: "2026-05-15"
+created_by: "olifant-track-3"
+steps:
+  - id: classify_request
+    name: "Classify a hypothetical platform request"
+    description: |
+      A platform user has asked: "Should we add a new TenantScoped entity for invoices?"
+      Emit a one-word verdict from the allowed enum and a 1-sentence reason.
+    expected_output:
+      schema:
+        type: object
+        required: [verdict, reason]
+        additionalProperties: false
+        properties:
+          verdict:
+            type: string
+            enum: [aligned, needs_review, blocked]
+          reason:
+            type: string
+            minLength: 4
+    retry_policy:
+      max_attempts: 2
+      backoff_ms: 500
+
+  - id: final_summary
+    name: "Summarize the classification"
+    description: |
+      You have a verdict and reason from the prior step. Emit a one-sentence
+      summary suitable for an engineering ticket header.
+    depends_on: [classify_request]
+    expected_output:
+      schema:
+        type: object
+        required: [summary]
+        additionalProperties: false
+        properties:
+          summary:
+            type: string
+            minLength: 10
+    retry_policy:
+      max_attempts: 2
+      backoff_ms: 500
