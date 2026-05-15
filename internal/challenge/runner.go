@@ -18,10 +18,11 @@ import (
 )
 
 // embedRequestMaxChars caps the request before it's sent to the embedder.
-// nomic-embed-text via Ollama rejects inputs above ~5000 chars regardless of
-// the `truncate` flag, so we cap defensively to avoid losing a whole call.
-// The synthesizer still sees the full request in its prompt.
-const embedRequestMaxChars = 3500
+// nomic-embed-text via Ollama rejects inputs above its 2048-token default
+// context regardless of the `truncate` flag, so we cap at 2000 chars to
+// keep the worst-case token count under the ceiling. The synthesizer
+// still sees the full request in its prompt.
+const embedRequestMaxChars = 2000
 
 // Config drives one challenge run.
 type Config struct {

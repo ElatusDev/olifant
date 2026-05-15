@@ -47,6 +47,18 @@ const (
 	snapshotCollectionPrefix = "code_history"
 )
 
+// embedderMaxChars caps inputs to /api/embed before sending. The
+// retrieval embedder (nomic-embed-text) has a 2048-token default
+// context window; despite `truncate: true` in the request, Ollama
+// has been observed to reject inputs that decode to more tokens
+// than the context window (P5 snap-3f33fe3 was lost this way).
+// At ~1 char/token worst-case (CJK, dense code with many short
+// tokens), 2000 chars keeps the worst-case token count under the
+// 2048 ceiling. Lowering it here, rather than raising num_ctx via
+// a model-side Modelfile, keeps the cap inside the binary so no
+// infra-side coordination is needed when the model is repulled.
+const embedderMaxChars = 2000
+
 // Index embeds the records' commit summaries and per-file snapshots
 // and upserts them into two ChromaDB collection families:
 //
@@ -178,8 +190,6 @@ func embedAndUpsert(
 	batchSize int,
 	verbose bool,
 ) (upserted, batches int, err error) {
-	const embedderMaxChars = 3500
-
 	for start := 0; start < len(chunks); start += batchSize {
 		end := start + batchSize
 		if end > len(chunks) {
@@ -193,7 +203,12 @@ func embedAndUpsert(
 
 		emb, eerr := oc.Embed(ctx, embedder, inputs)
 		if eerr != nil {
-			fmt.Fprintf(os.Stderr, "    warn: batch %d..%d failed (%v); retrying per-chunk\n", start, end, eerr)
+			// The batch may have died on a stale keep-alive (Tailscale
+			// read-timeout, EOF mid-response). Drop the pool before the
+			// per-chunk retry so each single-input request starts on a
+			// fresh TCP connection. P5 lost 30 chunks to this exact path.
+			oc.CloseIdle()
+			fmt.Fprintf(os.Stderr, "    warn: batch %d..%d failed (%v); reset conn pool, retrying per-chunk\n", start, end, eerr)
 			emb = make([][]float32, len(batch))
 			for i, in := range inputs {
 				single, ierr := oc.Embed(ctx, embedder, []string{in})

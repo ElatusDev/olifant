@@ -1,0 +1,32 @@
+version: "2"
+
+# Baseline lint config: standard linter set with targeted carve-outs
+# for the pre-existing findings inherited at the time this CI was
+# wired up (2026-05-15). Tighten in a dedicated follow-up PR — see
+# knowledge-base/architecture/olifant-instance-4-followups-retrospective.md
+# "Pre-existing lint baseline" for the punch list.
+linters:
+  default: standard
+
+  settings:
+    errcheck:
+      # defer X.Close() is the idiomatic Go pattern; errcheck reads
+      # too pedantically here. Same applies to drain-the-body Close().
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*os.File).Sync
+
+  exclusions:
+    rules:
+      # Pre-existing baseline; cleaned in followup PR (see retro §"Pre-existing lint baseline").
+      - path: internal/corpus/yaml_chunker\.go
+        linters: [ineffassign]
+      - path: internal/eval/runner\.go
+        linters: [staticcheck]
+        text: "SA9003"
+      - path: cmd/turn\.go
+        linters: [errcheck]
+        text: "os.Stdout.Write"
+      - path: internal/dictionary/bootstrap\.go
+        linters: [errcheck]

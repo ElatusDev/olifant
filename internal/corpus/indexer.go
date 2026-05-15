@@ -16,8 +16,11 @@ import (
 
 // embedderMaxChars caps an input passed to the embedder. nomic-embed-text via
 // Ollama rejects inputs that exceed its context (despite truncate: true).
-// Empirically the effective cap is ~5000 chars; 4000 is defensive.
-const embedderMaxChars = 4000
+// nomic's default num_ctx is 2048 tokens; at ~1 char/token worst-case
+// (dense prose/code with many short tokens), 2000 chars keeps the worst-
+// case token count under the ceiling. Lowered from 4000 (2026-05-15) after
+// the history-track P5 run lost a chunk to context-length-exceeded.
+const embedderMaxChars = 2000
 
 // capInput truncates s to maxChars at a UTF-8 boundary.
 func capInput(s string, maxChars int) string {

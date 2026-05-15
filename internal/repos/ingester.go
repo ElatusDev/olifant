@@ -193,7 +193,10 @@ func indexBatched(
 	ctx context.Context, oc *ollama.Client, cc *chroma.Client,
 	collectionID, embedder string, chunks []corpus.Chunk, batchSize int, verbose bool,
 ) (upserted, batches int, err error) {
-	const embedderMaxChars = 3500 // code is denser than prose — be conservative
+	// nomic-embed-text has a 2048-token default context. At ~1 char/token
+	// worst-case (dense code with many short tokens), 2000 chars stays
+	// under the ceiling. Mirrors history/index.go.embedderMaxChars.
+	const embedderMaxChars = 2000
 
 	for start := 0; start < len(chunks); start += batchSize {
 		end := start + batchSize
@@ -209,7 +212,11 @@ func indexBatched(
 
 		emb, eerr := oc.Embed(ctx, embedder, inputs)
 		if eerr != nil {
-			fmt.Fprintf(os.Stderr, "    warn: batch %d..%d failed (%v); retrying per-chunk\n", start, end, eerr)
+			// Drop idle keep-alives before per-chunk retry so the
+			// fallback never reuses a half-dead connection (the P5
+			// Tailscale read-timeout symptom from the history track).
+			oc.CloseIdle()
+			fmt.Fprintf(os.Stderr, "    warn: batch %d..%d failed (%v); reset conn pool, retrying per-chunk\n", start, end, eerr)
 			emb = make([][]float32, len(batch))
 			for i, in := range inputs {
 				single, ierr := oc.Embed(ctx, embedder, []string{in})
