@@ -91,11 +91,10 @@ func TestFilterByPattern_StandardID(t *testing.T) {
 
 func TestBuildValidateSchema_NilValidator_ReturnsBaseSchema(t *testing.T) {
 	got := BuildValidateSchema(nil, nil)
-	// Same shape as ValidateJSONSchema — checking pointer identity is fine.
-	if &got == nil {
+	if got == nil {
 		t.Fatalf("got nil schema")
 	}
-	// JSON-marshal both and compare.
+	// JSON-marshal both and compare structurally.
 	a, _ := json.Marshal(got)
 	b, _ := json.Marshal(ValidateJSONSchema)
 	if string(a) != string(b) {
