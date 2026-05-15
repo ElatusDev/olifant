@@ -59,16 +59,37 @@ type Plan struct {
 }
 
 // Step is one prompt-step in a plan.
+//
+// Executor routes this step to a named executor in RunnerConfig.Executors.
+// Empty string means "local" (preserves backward compatibility with plans
+// authored before hybrid routing existed). Known kinds: "local" (Ollama),
+// "claude" (Anthropic API). Per psp-v1.md §11 "per-step model selection".
 type Step struct {
-	ID             string                 `yaml:"id"`
-	Name           string                 `yaml:"name,omitempty"`
-	Description    string                 `yaml:"description"`
-	Signals        []string               `yaml:"signals,omitempty"`
-	ExpectedOutput ExpectedOutput         `yaml:"expected_output"`
-	ValidationRules []string              `yaml:"validation_rules,omitempty"`
-	DependsOn      []string               `yaml:"depends_on,omitempty"`
-	RetryPolicy    RetryPolicy            `yaml:"retry_policy,omitempty"`
-	BudgetMs       int                    `yaml:"budget_ms,omitempty"`
+	ID              string         `yaml:"id"`
+	Name            string         `yaml:"name,omitempty"`
+	Description     string         `yaml:"description"`
+	Signals         []string       `yaml:"signals,omitempty"`
+	ExpectedOutput  ExpectedOutput `yaml:"expected_output"`
+	ValidationRules []string       `yaml:"validation_rules,omitempty"`
+	DependsOn       []string       `yaml:"depends_on,omitempty"`
+	RetryPolicy     RetryPolicy    `yaml:"retry_policy,omitempty"`
+	BudgetMs        int            `yaml:"budget_ms,omitempty"`
+	Executor        string         `yaml:"executor,omitempty"`
+}
+
+// ExecutorKindLocal is the default executor name — Ollama-backed local model.
+const ExecutorKindLocal = "local"
+
+// ExecutorKindClaude routes a step to the Anthropic API executor.
+const ExecutorKindClaude = "claude"
+
+// ResolvedExecutor returns the executor name for this step, applying the
+// "empty == local" default rule once instead of scattering it.
+func (s Step) ResolvedExecutor() string {
+	if s.Executor == "" {
+		return ExecutorKindLocal
+	}
+	return s.Executor
 }
 
 // ExpectedOutput defines the per-step contract.
@@ -89,22 +110,30 @@ type RetryPolicy struct {
 type StepOutput map[string]interface{}
 
 // StepResult is the per-step turn record produced by the runner.
+//
+// ExecutorKind and the Cache* fields are zero/empty for plans that ran
+// before hybrid routing existed — preserved that way for the YAML
+// aggregate to stay backward-readable.
 type StepResult struct {
-	Seq                          int
-	StepID                       string
-	Attempts                     int
-	State                        State // STEP_ACK or STEP_NAK or RST
-	Output                       StepOutput
-	RawJSON                      string
-	ExecTimeMs                   int64
-	EvalTokens                   int
-	StepInputTokens              int // estimated
-	StepOutputTokens             int
-	ContextTokensConsumedSoFar   int // cumulative
-	ValidationPassFirstTry       bool
-	FinalViolations              []ValidationViolation
-	StartedAt                    time.Time
-	CompletedAt                  time.Time
+	Seq                        int
+	StepID                     string
+	Attempts                   int
+	State                      State // STEP_ACK or STEP_NAK or RST
+	Output                     StepOutput
+	RawJSON                    string
+	ExecTimeMs                 int64
+	EvalTokens                 int
+	StepInputTokens            int // estimated
+	StepOutputTokens           int
+	CacheCreationTokens        int
+	CacheReadTokens            int
+	ContextTokensConsumedSoFar int // cumulative
+	ExecutorKind               string
+	ExecutorID                 string
+	ValidationPassFirstTry     bool
+	FinalViolations            []ValidationViolation
+	StartedAt                  time.Time
+	CompletedAt                time.Time
 }
 
 // ValidationViolation is the per-step validator's BLOCKER/WARNING/INFO.
@@ -135,10 +164,14 @@ type Aggregate struct {
 
 // StepSummary is one row in Aggregate.StepSummaries.
 type StepSummary struct {
-	Seq        int    `yaml:"seq"`
-	StepID     string `yaml:"step_id"`
-	State      State  `yaml:"state"`
-	Attempts   int    `yaml:"attempts"`
-	ElapsedMs  int64  `yaml:"elapsed_ms"`
-	EvalTokens int    `yaml:"eval_tokens,omitempty"`
+	Seq                 int    `yaml:"seq"`
+	StepID              string `yaml:"step_id"`
+	State               State  `yaml:"state"`
+	Attempts            int    `yaml:"attempts"`
+	ElapsedMs           int64  `yaml:"elapsed_ms"`
+	EvalTokens          int    `yaml:"eval_tokens,omitempty"`
+	ExecutorKind        string `yaml:"executor_kind,omitempty"`
+	ExecutorID          string `yaml:"executor_id,omitempty"`
+	CacheCreationTokens int    `yaml:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int    `yaml:"cache_read_tokens,omitempty"`
 }

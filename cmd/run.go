@@ -48,7 +48,23 @@ func Run(args []string) int {
 	if *synth != "" {
 		executorModel = *synth
 	}
-	executor := psp.NewLocalExecutor(rt.OllamaURL, executorModel)
+	localExec := psp.NewLocalExecutor(rt.OllamaURL, executorModel)
+
+	// Build the executor routing table. LocalExecutor is always registered;
+	// ClaudeAPIExecutor only when ANTHROPIC_API_KEY is present. Plans that
+	// reference an unregistered executor fail at pre-flight (psp.Run) with
+	// a clear error instead of silently routing elsewhere.
+	executors := map[string]psp.Executor{
+		psp.ExecutorKindLocal: localExec,
+	}
+	if claudeCfg, ok := config.ResolveClaude(); ok {
+		executors[psp.ExecutorKindClaude] = psp.NewClaudeCodeExecutor(
+			claudeCfg.Binary, claudeCfg.Model, claudeCfg.Effort, claudeCfg.Timeout, claudeCfg.WorkDir,
+		)
+		if *verbose {
+			fmt.Fprintln(os.Stderr, "config:", claudeCfg.String())
+		}
+	}
 
 	// Find kb root for short-term writes + signal resolution.
 	kbRoot := ""
@@ -65,10 +81,11 @@ func Run(args []string) int {
 	defer cancel()
 
 	result, rerr := psp.Run(ctx, psp.RunnerConfig{
-		Executor: executor,
-		Plan:     plan,
-		KBRoot:   kbRoot,
-		Verbose:  *verbose,
+		Executor:  localExec, // backward-compat default for callsites not using Executors
+		Executors: executors,
+		Plan:      plan,
+		KBRoot:    kbRoot,
+		Verbose:   *verbose,
 	})
 	if rerr != nil {
 		fmt.Fprintln(os.Stderr, "olifant run:", rerr)
@@ -82,6 +99,25 @@ func Run(args []string) int {
 		plan.PlanID, result.State, result.Aggregate.Verdict,
 		result.Aggregate.TotalSteps, result.Aggregate.TotalAttempts,
 		result.Aggregate.TotalElapsedMs)
+
+	// Per-step + cache breakdown — useful for smoke verification on hybrid plans.
+	if *verbose && len(result.Steps) > 0 {
+		var cacheCreate, cacheRead int
+		for _, sr := range result.Steps {
+			cacheCreate += sr.CacheCreationTokens
+			cacheRead += sr.CacheReadTokens
+			fmt.Printf("  step %d %-20s executor=%-7s id=%-30s elapsed=%6dms eval=%5d cache(rw)=%d/%d\n",
+				sr.Seq, sr.StepID, sr.ExecutorKind, sr.ExecutorID, sr.ExecTimeMs, sr.EvalTokens, sr.CacheReadTokens, sr.CacheCreationTokens)
+		}
+		if cacheCreate+cacheRead > 0 {
+			pct := 0.0
+			if denom := cacheCreate + cacheRead; denom > 0 {
+				pct = 100.0 * float64(cacheRead) / float64(denom)
+			}
+			fmt.Printf("  cache totals — read=%d created=%d hit_rate=%.1f%%\n", cacheRead, cacheCreate, pct)
+		}
+	}
+
 	if result.AggregatePath != "" {
 		fmt.Printf("aggregate: %s\n", result.AggregatePath)
 	}

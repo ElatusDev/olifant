@@ -17,13 +17,21 @@ type Executor interface {
 }
 
 // Response from an executor — the raw text + parsed structured output.
+//
+// CacheCreationTokens / CacheReadTokens are populated by executors that
+// support prompt caching (Claude). They are zero for executors without
+// caching semantics (Ollama). Surfacing them lets the aggregate report
+// cache hit rate per plan, which is the central cost metric for hybrid
+// execution.
 type Response struct {
-	RawText           string
-	Output            StepOutput
-	EvalTokens        int
-	PromptTokens      int
-	OutputTokens      int
-	TotalDurationNs   int64
+	RawText             string
+	Output              StepOutput
+	EvalTokens          int
+	PromptTokens        int
+	OutputTokens        int
+	CacheCreationTokens int
+	CacheReadTokens     int
+	TotalDurationNs     int64
 }
 
 // LocalExecutor backs the prompt-runner with Ollama-hosted models. v0 ships
