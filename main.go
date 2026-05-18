@@ -45,6 +45,8 @@ func main() {
 		os.Exit(cmd.Validate(args))
 	case "history":
 		os.Exit(cmd.History(args))
+	case "dataset":
+		os.Exit(cmd.Dataset(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -74,6 +76,7 @@ SUBCOMMANDS:
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
   history      scan — walk repo commit history and emit JSONL training data
+  dataset      build | stats — extract Tier 1+2 JSONL training data from the KB
   version      print version
   help         this message
 
