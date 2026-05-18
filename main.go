@@ -76,7 +76,7 @@ SUBCOMMANDS:
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
   history      scan — walk repo commit history and emit JSONL training data
-  dataset      build | stats — extract Tier 1+2 JSONL training data from the KB
+  dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB
   version      print version
   help         this message
 
