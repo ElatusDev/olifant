@@ -48,8 +48,8 @@ func TestApplyDefaults_FillsZeroFields(t *testing.T) {
 	if got.TopN != 8 {
 		t.Errorf("default TopN = %d, want 8", got.TopN)
 	}
-	if got.MaxTokens != 1024 {
-		t.Errorf("default MaxTokens = %d, want 1024", got.MaxTokens)
+	if got.MaxTokens != 4096 {
+		t.Errorf("default MaxTokens = %d, want 4096", got.MaxTokens)
 	}
 	if got.OutDir != "plans" {
 		t.Errorf("default OutDir = %q, want %q", got.OutDir, "plans")

@@ -36,7 +36,7 @@ type Config struct {
 	Scopes           []string // collections to query; empty = all
 	TopN             int      // chunks per scope (default 8)
 	Temperature      float64  // 0.1 default; 0 = deterministic
-	MaxTokens        int      // synthesizer num_predict (default 1024)
+	MaxTokens        int      // synthesizer num_predict (default 4096 — aligned with validate/runner.go after the 1024-regress fix; multi-claim outputs with cites and evidence overflow 1024)
 	Verbose          bool
 	Validator        *CiteValidator // optional; nil disables cite validation
 	MaxValidateRetries int          // default 1 retry on cite hallucination
@@ -72,7 +72,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		cfg.Temperature = 0
 	}
 	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = 1024
+		cfg.MaxTokens = 4096
 	}
 
 	oc := ollama.New(cfg.OllamaURL)

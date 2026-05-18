@@ -126,11 +126,13 @@ func applyDefaults(cfg Config) Config {
 		cfg.TopN = 8
 	}
 	if cfg.MaxTokens <= 0 {
-		// Match challenge's 1024 default. Larger goals may need raising
-		// via --max-tokens, but the current rig (4096 num_ctx loaded on
-		// olifant mini) can't safely exceed ~1500 output tokens after
-		// the prompt is accounted for.
-		cfg.MaxTokens = 1024
+		// Match challenge + validate at 4096 (Instance 1's bump, which
+		// only kicked in via the grounded validator path until this
+		// regress fix). num_predict is a cap, not a reservation —
+		// num_ctx (currently 4096 default on the olifant mini)
+		// constrains input+output together, so a 4096 cap here just
+		// removes the artificial 1024 ceiling on multi-claim outputs.
+		cfg.MaxTokens = 4096
 	}
 	if cfg.Temperature < 0 {
 		cfg.Temperature = 0
