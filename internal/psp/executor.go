@@ -59,7 +59,11 @@ func (e *LocalExecutor) Execute(ctx context.Context, prompt string, schema map[s
 		Prompt: prompt,
 		Options: map[string]interface{}{
 			"temperature": 0,
-			"num_predict": 1024,
+			// Aligned with challenge + prompt + validate at 4096 after
+			// the 1024-regress fix. PSP steps that emit short outputs
+			// (verdicts, simple actions) won't approach this cap;
+			// longer plan-execution outputs no longer get truncated.
+			"num_predict": 4096,
 		},
 	}
 	if len(schema) > 0 {
