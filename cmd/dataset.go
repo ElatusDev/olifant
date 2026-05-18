@@ -35,7 +35,7 @@ func datasetBuild(args []string) int {
 	fs := flag.NewFlagSet("dataset build", flag.ExitOnError)
 	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect via cwd ancestors)")
 	outDir := fs.String("out", "", "output dir (default: <kb-root>/training/<YYYY-MM-DD>)")
-	sourcesFlag := fs.String("sources", "all", "comma list of: retros,decisions,antipatterns,patterns,triples,all")
+	sourcesFlag := fs.String("sources", "all", "comma list of: retros,decisions,antipatterns,patterns,triples,failure-modes,all")
 	dryRun := fs.Bool("dry-run", false, "extract + count only; no JSONL or manifest write")
 	verbose := fs.Bool("v", false, "verbose per-source progress")
 	_ = fs.Parse(args)
@@ -145,7 +145,7 @@ func parseSources(s string) ([]dataset.SourceKind, error) {
 		}
 		k, ok := known[tok]
 		if !ok {
-			return nil, fmt.Errorf("unknown source %q (valid: retros,decisions,antipatterns,patterns,triples)", tok)
+			return nil, fmt.Errorf("unknown source %q (valid: retros,decisions,antipatterns,patterns,triples,failure-modes)", tok)
 		}
 		out = append(out, k)
 	}
