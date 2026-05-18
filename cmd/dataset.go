@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -12,11 +13,12 @@ import (
 	"github.com/ElatusDev/olifant/dataset"
 )
 
-// Dataset dispatches `olifant dataset <build|stats>` per the
-// olifant-training-plan.md §4 extraction recipe.
+// Dataset dispatches `olifant dataset <build|stats|index>` per the
+// olifant-training-plan.md §4 extraction recipe (build/stats) plus
+// the failure-modes ChromaDB indexer (index).
 func Dataset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats)")
+		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -25,6 +27,8 @@ func Dataset(args []string) int {
 		return datasetBuild(rest)
 	case "stats":
 		return datasetStats(rest)
+	case "index":
+		return datasetIndex(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant dataset: unknown action %q\n", action)
 		return 2
@@ -123,6 +127,82 @@ func datasetStats(args []string) int {
 		return 1
 	}
 	fmt.Print(string(data))
+	return 0
+}
+
+// datasetIndex pushes failure-mode corrections into ChromaDB so the
+// challenge runner can retrieve them at inference time. Idempotent —
+// re-running against the same source is a no-op upsert.
+func datasetIndex(args []string) int {
+	fs := flag.NewFlagSet("dataset index", flag.ExitOnError)
+	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect)")
+	ollamaURL := fs.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+	chromaURL := fs.String("chroma-url", "http://localhost:8000", "ChromaDB base URL (typically port-forwarded)")
+	chromaTenant := fs.String("chroma-tenant", "default_tenant", "ChromaDB tenant")
+	chromaDB := fs.String("chroma-database", "default_database", "ChromaDB database")
+	embedder := fs.String("embedder", "nomic-embed-text", "Ollama embedding model")
+	batchSize := fs.Int("batch", 32, "chunks per embed batch")
+	dryRun := fs.Bool("dry-run", false, "load + chunk only; no embed, no upsert")
+	verbose := fs.Bool("v", false, "verbose per-collection progress")
+	timeoutSec := fs.Int("timeout", 600, "overall timeout in seconds")
+	_ = fs.Parse(args)
+
+	root := *kbRoot
+	if root == "" {
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			root = filepath.Dir(found)
+		}
+	}
+	if root == "" {
+		fmt.Fprintln(os.Stderr, "dataset index: --kb-root not specified and not autodetected")
+		return 1
+	}
+	root, _ = filepath.Abs(root)
+
+	fmt.Println("kb-root:    ", root)
+	fmt.Println("ollama-url: ", *ollamaURL)
+	fmt.Println("chroma-url: ", *chromaURL)
+	fmt.Println("embedder:   ", *embedder)
+	if *dryRun {
+		fmt.Println("mode:        dry-run (no embed, no upsert)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
+	defer cancel()
+
+	stats, err := dataset.IndexFailureModes(ctx, dataset.IndexConfig{
+		KBRoot:       root,
+		OllamaURL:    *ollamaURL,
+		ChromaURL:    *chromaURL,
+		ChromaTenant: *chromaTenant,
+		ChromaDB:     *chromaDB,
+		Embedder:     *embedder,
+		BatchSize:    *batchSize,
+		Verbose:      *verbose,
+		DryRun:       *dryRun,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dataset index:", err)
+		return 1
+	}
+
+	fmt.Println("dataset index summary:")
+	fmt.Printf("  entries read:    %d\n", stats.EntriesRead)
+	fmt.Printf("  chunks built:    %d\n", stats.Chunks)
+	fmt.Printf("  chunks upserted: %d\n", stats.Upserted)
+	fmt.Printf("  batches sent:    %d\n", stats.BatchesSent)
+	fmt.Printf("  elapsed:         %s\n", stats.Elapsed.Round(time.Millisecond))
+	if len(stats.PerCollection) > 0 {
+		fmt.Println("  per collection:")
+		names := make([]string, 0, len(stats.PerCollection))
+		for n := range stats.PerCollection {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Printf("    %-32s %d chunks\n", n, stats.PerCollection[n])
+		}
+	}
 	return 0
 }
 

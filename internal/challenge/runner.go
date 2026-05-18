@@ -90,28 +90,33 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	embedMs := time.Since(embedStart).Milliseconds()
 
-	// 2. Retrieve from each scope, querying four collection families:
+	// 2. Retrieve from each scope, querying five collection families:
 	//      corpus_<scope>        — KB docs (specs, dictionaries, retros)
 	//      code_<scope>          — current code state (from `repo ingest`)
 	//      history_<scope>       — commit summaries (from `history index`)
 	//      code_history_<scope>  — file content at past commits
+	//      failure_modes_<scope> — curated eval-derived corrections
+	//                              (from `dataset index`)
 	retrStart := time.Now()
 	scopes := cfg.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"universal", "backend", "webapp", "mobile", "e2e", "infra", "platform-process"}
 	}
 	// universal + platform-process have neither code nor history analogues —
-	// we never ingest code or commit history for those scopes.
-	collFamilies := []string{"corpus", "code", "history", "code_history"}
+	// we never ingest code or commit history for those scopes. failure_modes
+	// IS cross-cutting (it carries universal-scope corrections), so it gets
+	// the same exemption corpus does.
+	collFamilies := []string{"corpus", "code", "history", "code_history", "failure_modes"}
 	codeScopes := map[string]bool{
 		"backend": true, "webapp": true, "mobile": true, "e2e": true, "infra": true,
 	}
 	var hits []retrievedHit
 	for _, scope := range scopes {
 		for _, family := range collFamilies {
-			// code, history, and code_history are all stack-scoped — skip them
-			// for universal + platform-process.
-			if family != "corpus" && !codeScopes[scope] {
+			// code/history/code_history are stack-scoped — skip them for
+			// universal + platform-process. corpus + failure_modes span
+			// all scopes.
+			if family != "corpus" && family != "failure_modes" && !codeScopes[scope] {
 				continue
 			}
 			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
