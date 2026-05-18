@@ -14,11 +14,8 @@ import (
 // execution → reflection" coupling.
 const tripleExcerptCap = 800
 
-// triplePathSuffixes are the three file naming conventions that
-// define a lifecycle triple.
-var triplePathSuffixes = []string{"-workflow.md", "-prompt.md", "-retrospective.md"}
-
-// triplePathLabels for the assistant-side rendering.
+// triplePathLabels for the assistant-side rendering. Keys also enumerate
+// the three file-name suffixes that define a lifecycle triple.
 var triplePathLabels = map[string]string{
 	"-workflow.md":      "Workflow (design)",
 	"-prompt.md":        "Prompt (execution)",

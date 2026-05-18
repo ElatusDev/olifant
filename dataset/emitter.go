@@ -69,9 +69,12 @@ func writeManifest(outDir string, m *Manifest) error {
 	defer f.Close()
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)
-	defer enc.Close()
 	if err := enc.Encode(m); err != nil {
+		_ = enc.Close()
 		return fmt.Errorf("encode manifest: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("close manifest encoder: %w", err)
 	}
 	return nil
 }
