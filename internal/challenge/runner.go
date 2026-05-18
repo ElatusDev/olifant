@@ -101,6 +101,22 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	scopes := cfg.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"universal", "backend", "webapp", "mobile", "e2e", "infra", "platform-process"}
+	} else {
+		// Cross-cutting corpus + failure_modes always carry universal
+		// scope entries that apply regardless of the case's stack.
+		// Without this, an eval case scoped to [mobile] would miss
+		// failure_modes_universal (FM4/5/6/7/8) and corpus_universal
+		// (cross-stack standards, decisions, anti-patterns).
+		hasUniversal := false
+		for _, s := range scopes {
+			if s == "universal" {
+				hasUniversal = true
+				break
+			}
+		}
+		if !hasUniversal {
+			scopes = append([]string{"universal"}, scopes...)
+		}
 	}
 	// universal + platform-process have neither code nor history analogues —
 	// we never ingest code or commit history for those scopes. failure_modes
@@ -152,12 +168,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	retrieveMs := time.Since(retrStart).Milliseconds()
 
-	// Sort by distance (lower = closer) and keep TopN globally — not per-scope.
-	// Tighter than topN*2: dilution by off-topic chunks was a major failure mode.
+	// Sort by distance (lower = closer). Pre-sort guarantees both the
+	// failure_modes reserve and the final fill pick the closest
+	// candidates within each pool.
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Distance < hits[j].Distance })
-	if len(hits) > cfg.TopN {
-		hits = hits[:cfg.TopN]
-	}
+	hits = selectTopWithFMReserve(hits, cfg.TopN, fmReserve)
 
 	if cfg.Verbose {
 		fmt.Println("  retrieved hits:")
@@ -326,6 +341,54 @@ func capChars(s string, maxChars int) string {
 		end--
 	}
 	return s[:end]
+}
+
+// fmReserve is the number of failure_modes slots guaranteed in the
+// retrieved top-N regardless of cosine-distance ranking. Code/history
+// chunks dominate cosine similarity for file-content queries (a tsx
+// screen embeds closest to other tsx screens), so high-precision
+// corrections — which teach the model the canonical output shape —
+// get crowded out under pure global top-N selection. Surfaced by the
+// 2026-05-18 22:32Z eval: case 3 mobile-settings retrieved 8/8
+// mobile/code chunks, zero failure_modes_universal hits, and
+// re-emitted confirms_unsupported the FM6 entry should have prevented.
+const fmReserve = 2
+
+// selectTopWithFMReserve truncates the distance-sorted `hits` to
+// `topN` slots while guaranteeing up to `reserve` slots for hits
+// whose scope ends in "/failure_modes". Returns a new slice
+// re-sorted by distance so positional ordering in the resulting
+// prompt still puts the closest hits first.
+//
+// Contract:
+//   - `hits` MUST be pre-sorted by ascending Distance.
+//   - When `len(hits) <= topN`, `hits` is returned unchanged.
+//   - When fewer than `reserve` failure_modes hits are available, the
+//     reserve is partially filled; remaining slots go to non-FM hits.
+func selectTopWithFMReserve(hits []retrievedHit, topN, reserve int) []retrievedHit {
+	if topN <= 0 || len(hits) <= topN {
+		return hits
+	}
+	selected := make([]retrievedHit, 0, topN)
+	fmPicked := 0
+	remaining := make([]retrievedHit, 0, len(hits))
+	for _, h := range hits {
+		isFM := strings.HasSuffix(h.Scope, "/failure_modes")
+		if isFM && fmPicked < reserve {
+			selected = append(selected, h)
+			fmPicked++
+			continue
+		}
+		remaining = append(remaining, h)
+	}
+	for _, h := range remaining {
+		if len(selected) >= topN {
+			break
+		}
+		selected = append(selected, h)
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Distance < selected[j].Distance })
+	return selected
 }
 
 // retrievedHit is one Chroma result row, package-shared so Run() and
