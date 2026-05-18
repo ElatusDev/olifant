@@ -92,6 +92,8 @@ func runOne(kbRoot string, src SourceKind) ([]Example, SourceStats, error) {
 		return ExtractPatterns(kbRoot)
 	case SourceTriples:
 		return ExtractTriples(kbRoot)
+	case SourceFailureModes:
+		return ExtractFailureModes(kbRoot)
 	default:
 		return nil, SourceStats{}, fmt.Errorf("unknown source %q", src)
 	}

@@ -45,6 +45,15 @@ entries:
 		"# Cycle WF\n\ncycle wf body\n")
 	mustWrite(t, filepath.Join(tmp, "prompts", "core-api", "sample-cycle-prompt.md"),
 		"# Cycle Prompt\n\ncycle prompt body\n")
+	mustWrite(t, filepath.Join(tmp, "eval", "failure-modes", "v1.yaml"), `
+meta: {version: 1, source: test}
+entries:
+  - id: FM1
+    code: cite_unresolved
+    scope: backend
+    user_prompt: Where does X live?
+    correct_assistant_response: core-api/X.java
+`)
 
 	out := filepath.Join(tmp, "training", "2026-05-18")
 	stats, err := Build(BuildConfig{
@@ -57,11 +66,11 @@ entries:
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if stats.SourcesProcessed != 5 {
-		t.Errorf("SourcesProcessed=%d want 5", stats.SourcesProcessed)
+	if stats.SourcesProcessed != 6 {
+		t.Errorf("SourcesProcessed=%d want 6", stats.SourcesProcessed)
 	}
-	if stats.ExamplesEmitted < 5 {
-		t.Errorf("ExamplesEmitted=%d want >=5", stats.ExamplesEmitted)
+	if stats.ExamplesEmitted < 6 {
+		t.Errorf("ExamplesEmitted=%d want >=6", stats.ExamplesEmitted)
 	}
 
 	// Verify each per-source subdir got a JSONL.

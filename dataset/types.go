@@ -48,6 +48,7 @@ const (
 	SourceAntipatterns  SourceKind = "antipatterns"
 	SourcePatterns      SourceKind = "patterns"
 	SourceTriples       SourceKind = "triples"
+	SourceFailureModes  SourceKind = "failure-modes"
 )
 
 // AllSources is the canonical ordering.
@@ -57,12 +58,13 @@ var AllSources = []SourceKind{
 	SourceAntipatterns,
 	SourcePatterns,
 	SourceTriples,
+	SourceFailureModes,
 }
 
 // Tier maps a source to its training-plan tier.
 func (s SourceKind) Tier() int {
 	switch s {
-	case SourceRetros, SourceDecisions, SourceAntipatterns, SourcePatterns:
+	case SourceRetros, SourceDecisions, SourceAntipatterns, SourcePatterns, SourceFailureModes:
 		return 1
 	case SourceTriples:
 		return 2
