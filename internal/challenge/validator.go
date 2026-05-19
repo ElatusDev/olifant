@@ -583,6 +583,28 @@ func (v *CiteValidator) RetryPromptAddendum(violations []Violation, originalRequ
 	sb.WriteString("(D###, AP##, SB-##, …) or real source paths in the RETRIEVED CONTEXT. ")
 	sb.WriteString("If you cannot identify such evidence, do NOT use INVALID — use VALID, VALID_WITH_CAVEATS, ")
 	sb.WriteString("or NEEDS_CLARIFICATION instead.\n")
+
+	// Per-code, surgical guidance — only emitted when the
+	// corresponding violation actually fired this attempt. Generic
+	// guidance #1-5 is always shown; these targeted lines call out
+	// the exact failure mode the model just produced so attention
+	// goes where it needs to.
+	codeHits := map[string]bool{}
+	for _, vi := range blockers {
+		codeHits[vi.Code] = true
+	}
+	if codeHits["clarify_required_but_empty"] {
+		sb.WriteString("6a. (clarify_required_but_empty was triggered) Your verdict was NEEDS_CLARIFICATION but you left clarify[] empty. Populate clarify[] with at least one CONCRETE question, each with `question` and `why_asking`. If you cannot phrase a real question, pick a different verdict: VALID, VALID_WITH_CAVEATS, or OUT_OF_SCOPE.\n")
+	}
+	if codeHits["confirms_unsupported"] {
+		sb.WriteString("6b. (confirms_unsupported was triggered) Each entry in confirms[] needs at least one cite. Either supply a cite (artifact ID like D17 / AP14 / SB-04, or a real file path that appeared in the RETRIEVED CONTEXT), or drop the claim entirely.\n")
+	}
+	if codeHits["empty_assessment"] {
+		sb.WriteString("6c. (empty_assessment was triggered) verdict is non-VALID but confirms[]/contradicts[]/clarify[] are ALL empty. Populate at least one of them — that's what gives the verdict substance. If you genuinely have no findings, verdict=VALID is the honest answer.\n")
+	}
+	if codeHits["cite_unresolved"] {
+		sb.WriteString("6d. (cite_unresolved was triggered) One or more cite paths don't exist on disk. Common causes: (i) Java cites under `com.akademia/...` — the real package root is `com.akademiaplus` (with `plus`); (ii) paths missing the canonical repo prefix — every cite must start with one of: core-api, akademia-plus-web, elatusdev-web, akademia-plus-central, akademia-plus-go, core-api-e2e, infra; (iii) placeholder substitution literals like `<env>` or `${variable}` — replace with concrete values from the RETRIEVED CONTEXT or drop the cite. When uncertain, prefer an artifact ID (D###, AP##) over a file path.\n")
+	}
 	if originalRequest != "" {
 		// One-line summary if multi-line (avoid the model copying the framing).
 		summary := originalRequest
