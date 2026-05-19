@@ -13,12 +13,13 @@ import (
 	"github.com/ElatusDev/olifant/dataset"
 )
 
-// Dataset dispatches `olifant dataset <build|stats|index>` per the
-// olifant-training-plan.md §4 extraction recipe (build/stats) plus
-// the failure-modes ChromaDB indexer (index).
+// Dataset dispatches `olifant dataset <build|stats|index|pack|sanitize-docs>`
+// per the olifant-training-plan.md §4 extraction recipe (build/stats), the
+// failure-modes ChromaDB indexer (index), the LoRA-upload packer (pack),
+// and the markdown attribution sweeper (sanitize-docs).
 func Dataset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index)")
+		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index|pack|sanitize-docs)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -29,6 +30,10 @@ func Dataset(args []string) int {
 		return datasetStats(rest)
 	case "index":
 		return datasetIndex(rest)
+	case "pack":
+		return datasetPack(rest)
+	case "sanitize-docs":
+		return datasetSanitizeDocs(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant dataset: unknown action %q\n", action)
 		return 2
@@ -202,6 +207,107 @@ func datasetIndex(args []string) int {
 		for _, n := range names {
 			fmt.Printf("    %-32s %d chunks\n", n, stats.PerCollection[n])
 		}
+	}
+	return 0
+}
+
+// datasetPack concatenates a dataset-build output dir's per-tier JSONLs
+// into one ShareGPT JSONL ready for LoRA upload, stripping
+// `Co-authored-by:…@nordstrom.com` lines from string fields per Hard
+// Rule #4 of olifant-fine-tune-v1-prompt.md.
+func datasetPack(args []string) int {
+	fs := flag.NewFlagSet("dataset pack", flag.ExitOnError)
+	inDir := fs.String("in", "", "training input dir (e.g. <kb-root>/training/2026-05-18) (required)")
+	outPath := fs.String("out", "", "concatenated JSONL output path (required)")
+	subdirsFlag := fs.String("subdirs", "", "comma list of top-level dirs to include; empty = all")
+	verbose := fs.Bool("v", false, "verbose per-file progress")
+	_ = fs.Parse(args)
+
+	if *inDir == "" || *outPath == "" {
+		fmt.Fprintln(os.Stderr, "dataset pack: --in and --out required")
+		return 2
+	}
+	inAbs, _ := filepath.Abs(*inDir)
+	outAbs, _ := filepath.Abs(*outPath)
+
+	var subdirs []string
+	if s := strings.TrimSpace(*subdirsFlag); s != "" {
+		for _, t := range strings.Split(s, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				subdirs = append(subdirs, t)
+			}
+		}
+	}
+
+	fmt.Println("in:   ", inAbs)
+	fmt.Println("out:  ", outAbs)
+	if len(subdirs) > 0 {
+		fmt.Println("subdirs:", strings.Join(subdirs, ","))
+	}
+
+	stats, err := dataset.Pack(dataset.PackConfig{
+		InputDir: inAbs,
+		OutPath:  outAbs,
+		Subdirs:  subdirs,
+		Verbose:  *verbose,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dataset pack:", err)
+		return 1
+	}
+
+	fmt.Println("dataset pack summary:")
+	fmt.Printf("  files scanned:            %d\n", stats.FilesScanned)
+	fmt.Printf("  lines in:                 %d\n", stats.LinesIn)
+	fmt.Printf("  lines out:                %d\n", stats.LinesOut)
+	fmt.Printf("  lines modified:           %d\n", stats.LinesModified)
+	fmt.Printf("  nordstrom lines stripped: %d\n", stats.NordstromLinesStripped)
+	fmt.Printf("  bytes out:                %d\n", stats.BytesOut)
+	fmt.Printf("  elapsed:                  %s\n", stats.Elapsed.Round(time.Millisecond))
+	return 0
+}
+
+// datasetSanitizeDocs walks a directory tree and strips
+// Claude/Anthropic + nordstrom-email attribution lines from every *.md
+// file. Functional references (CLAUDE.md filename, claude-code CLI,
+// com.anthropic Maven group, prose mentions) are preserved.
+func datasetSanitizeDocs(args []string) int {
+	fs := flag.NewFlagSet("dataset sanitize-docs", flag.ExitOnError)
+	root := fs.String("root", "", "directory to walk recursively (required)")
+	dryRun := fs.Bool("dry-run", false, "print what would change; do not write")
+	verbose := fs.Bool("v", false, "print per-file modifications")
+	_ = fs.Parse(args)
+
+	if *root == "" {
+		fmt.Fprintln(os.Stderr, "dataset sanitize-docs: --root required")
+		return 2
+	}
+	rootAbs, _ := filepath.Abs(*root)
+	fmt.Println("root:   ", rootAbs)
+	if *dryRun {
+		fmt.Println("mode:    dry-run (no writes)")
+	}
+
+	stats, err := dataset.SanitizeDocs(dataset.SanitizeDocsConfig{
+		Root:    rootAbs,
+		DryRun:  *dryRun,
+		Verbose: *verbose,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dataset sanitize-docs:", err)
+		return 1
+	}
+
+	fmt.Println("sanitize-docs summary:")
+	fmt.Printf("  files scanned:    %d\n", stats.FilesScanned)
+	fmt.Printf("  files modified:   %d\n", stats.FilesModified)
+	fmt.Printf("  lines stripped:   %d\n", stats.LinesStripped)
+	fmt.Printf("  bytes before:     %d\n", stats.BytesBefore)
+	fmt.Printf("  bytes after:      %d\n", stats.BytesAfter)
+	fmt.Printf("  elapsed:          %s\n", stats.Elapsed.Round(time.Millisecond))
+	if *verbose && len(stats.PerFile) > 0 {
+		// PerFile printing already happened in-loop with --v.
 	}
 	return 0
 }
