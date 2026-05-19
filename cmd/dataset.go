@@ -306,9 +306,6 @@ func datasetSanitizeDocs(args []string) int {
 	fmt.Printf("  bytes before:     %d\n", stats.BytesBefore)
 	fmt.Printf("  bytes after:      %d\n", stats.BytesAfter)
 	fmt.Printf("  elapsed:          %s\n", stats.Elapsed.Round(time.Millisecond))
-	if *verbose && len(stats.PerFile) > 0 {
-		// PerFile printing already happened in-loop with --v.
-	}
 	return 0
 }
 
