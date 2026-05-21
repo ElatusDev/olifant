@@ -105,6 +105,36 @@ func corpusScan(args []string) int {
 				return 2
 			}
 			sr = filepath.Join(rr, "src", "features", *module)
+		case "infra":
+			if *module == "" {
+				fmt.Fprintln(os.Stderr, "corpus scan: --module required for infra ('root' for terraform/*.tf, or a name under terraform/modules/)")
+				return 2
+			}
+			if *module == "root" {
+				sr = filepath.Join(rr, "terraform")
+			} else {
+				sr = filepath.Join(rr, "terraform", "modules", *module)
+			}
+		case "core-api-e2e":
+			if *module == "" {
+				fmt.Fprintln(os.Stderr, "corpus scan: --module required for core-api-e2e (collection name without .postman_collection.json suffix)")
+				return 2
+			}
+			// Resolve to single collection file. Try the standard suffix
+			// first; fall back to a bare .json (some collections use
+			// non-standard names like platform-api-e2e.json).
+			cand := filepath.Join(rr, "Postman Collections", *module+".postman_collection.json")
+			if _, err := os.Stat(cand); err == nil {
+				sr = cand
+			} else {
+				sr = filepath.Join(rr, "Postman Collections", *module+".json")
+			}
+		case "knowledge-base":
+			if *module == "" {
+				fmt.Fprintln(os.Stderr, "corpus scan: --module required for knowledge-base (one of: decisions, anti-patterns, patterns, dictionary)")
+				return 2
+			}
+			sr = filepath.Join(rr, *module)
 		default:
 			fmt.Fprintf(os.Stderr, "corpus scan: source-root autodetection not yet implemented for repo %q (use --source-root)\n", *repo)
 			return 1
