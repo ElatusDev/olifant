@@ -15,10 +15,17 @@ import (
 	"github.com/ElatusDev/olifant/internal/corpus"
 )
 
-// Corpus dispatches `olifant corpus <build|diff|index>`.
+// Corpus dispatches `olifant corpus <build|diff|index|scan|prose|stats>`.
+//
+// build/diff/index belong to the v1 corpus pipeline (ChromaDB indexing,
+// per platform/knowledge-base/corpus/CORPUS-V1.md). scan/prose/stats
+// belong to the v2 curriculum extractor (per
+// olifant-fine-tune-v2-corpus-curriculum-workflow.md) — same package
+// because they share the corpus root abstraction but emit different
+// downstream artefacts (Chunk JSONL vs Symbol/Sentence YAML).
 func Corpus(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|diff|index)")
+		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|diff|index|scan|prose|stats)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -31,10 +38,159 @@ func Corpus(args []string) int {
 		return 1
 	case "index":
 		return corpusIndex(rest)
+	case "scan":
+		return corpusScan(rest)
+	case "prose":
+		return corpusProse(rest)
+	case "stats":
+		return corpusStats(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant corpus: unknown action %q\n", action)
 		return 2
 	}
+}
+
+// corpusScan runs a v2-curriculum vocabulary extractor and writes a
+// per-(repo, module) Symbol YAML to the KB. Per D-CC2, the active
+// extractor is chosen by repo name. Day 1 implements Java only; the TS,
+// HCL, JSON, and KB extractors land Days 3-4.
+func corpusScan(args []string) int {
+	fs := flag.NewFlagSet("corpus scan", flag.ExitOnError)
+	repo := fs.String("repo", "", "repo name (core-api, akademia-plus-web, ...) (required)")
+	repoRoot := fs.String("repo-root", "", "absolute path to repo root (default: autodetect via sibling-of-knowledge-base)")
+	module := fs.String("module", "", "module/feature within the repo (required for core-api/infra)")
+	sourceRoot := fs.String("source-root", "", "override the per-repo source-root convention")
+	out := fs.String("out", "", "output YAML path (default: <kb-root>/corpus/v2-curriculum/vocab/<repo>/<module>.yaml)")
+	dryRun := fs.Bool("dry-run", false, "extract + count only; no YAML write")
+	verbose := fs.Bool("v", false, "verbose per-file progress")
+	_ = fs.Parse(args)
+
+	if *repo == "" {
+		fmt.Fprintln(os.Stderr, "corpus scan: --repo required")
+		return 2
+	}
+
+	rr := *repoRoot
+	if rr == "" {
+		// findUp returns the absolute path to "knowledge-base/README.md"
+		// (e.g., /…/platform/knowledge-base/README.md). The platform root
+		// is the GRANDPARENT (two filepath.Dir hops up from the README).
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			platformRoot := filepath.Dir(filepath.Dir(found))
+			rr = filepath.Join(platformRoot, *repo)
+		}
+	}
+	if rr == "" {
+		fmt.Fprintln(os.Stderr, "corpus scan: --repo-root not specified and not autodetected")
+		return 1
+	}
+	rr, _ = filepath.Abs(rr)
+	if _, err := os.Stat(rr); err != nil {
+		fmt.Fprintf(os.Stderr, "corpus scan: repo-root %s: %v\n", rr, err)
+		return 1
+	}
+
+	sr := *sourceRoot
+	if sr == "" {
+		switch *repo {
+		case "core-api":
+			if *module == "" {
+				fmt.Fprintln(os.Stderr, "corpus scan: --module required for core-api")
+				return 2
+			}
+			sr = filepath.Join(rr, *module, "src", "main", "java")
+		default:
+			fmt.Fprintf(os.Stderr, "corpus scan: source-root autodetection not yet implemented for repo %q (use --source-root)\n", *repo)
+			return 1
+		}
+	}
+	sr, _ = filepath.Abs(sr)
+	if _, err := os.Stat(sr); err != nil {
+		fmt.Fprintf(os.Stderr, "corpus scan: source-root %s: %v\n", sr, err)
+		return 1
+	}
+
+	outPath := *out
+	if outPath == "" && !*dryRun {
+		kbReadme, _ := findUp("knowledge-base/README.md")
+		if kbReadme == "" {
+			fmt.Fprintln(os.Stderr, "corpus scan: --out required and KB not autodetected")
+			return 2
+		}
+		// kbDir = .../platform/knowledge-base (the README's parent).
+		kbDir := filepath.Dir(kbReadme)
+		name := *module
+		if name == "" {
+			name = "default"
+		}
+		outPath = filepath.Join(kbDir, "corpus", "v2-curriculum", "vocab", *repo, name+".yaml")
+	}
+	if outPath != "" {
+		outPath, _ = filepath.Abs(outPath)
+	}
+
+	fmt.Println("repo:        ", *repo)
+	fmt.Println("repo-root:   ", rr)
+	fmt.Println("source-root: ", sr)
+	fmt.Println("module:      ", *module)
+	if *dryRun {
+		fmt.Println("mode:         dry-run")
+	} else {
+		fmt.Println("out:         ", outPath)
+	}
+
+	stats, err := corpus.Scan(corpus.ScanConfig{
+		Repo:       *repo,
+		RepoRoot:   rr,
+		Module:     *module,
+		SourceRoot: sr,
+		OutPath:    outPath,
+		DryRun:     *dryRun,
+		Verbose:    *verbose,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus scan:", err)
+		return 1
+	}
+
+	fmt.Println("scan summary:")
+	fmt.Printf("  files scanned:    %d\n", stats.FilesScanned)
+	fmt.Printf("  symbols emitted:  %d\n", stats.SymbolsEmitted)
+	fmt.Printf("  elapsed:          %s\n", stats.Elapsed.Round(time.Millisecond))
+
+	if len(stats.ByKind) > 0 {
+		fmt.Println("  by kind:")
+		ks := make([]string, 0, len(stats.ByKind))
+		for k := range stats.ByKind {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		for _, k := range ks {
+			fmt.Printf("    %-14s %d\n", k, stats.ByKind[k])
+		}
+	}
+	if len(stats.ByConcern) > 0 {
+		fmt.Println("  by concern:")
+		ks := make([]string, 0, len(stats.ByConcern))
+		for k := range stats.ByConcern {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		for _, k := range ks {
+			fmt.Printf("    %-14s %d\n", k, stats.ByConcern[k])
+		}
+	}
+	return 0
+}
+
+func corpusProse(args []string) int {
+	fmt.Fprintln(os.Stderr, "corpus prose: not yet implemented (Day 5 deliverable)")
+	return 1
+}
+
+func corpusStats(args []string) int {
+	fmt.Fprintln(os.Stderr, "corpus stats: not yet implemented")
+	return 1
 }
 
 func corpusBuild(args []string) int {
