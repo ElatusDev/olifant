@@ -55,7 +55,11 @@ const (
 	KindAcronym    = "acronym"
 	KindComponent  = "component" // React/React-Native function component
 	KindHook       = "hook"      // React hook (useXxx naming convention)
-	KindEndpoint   = "endpoint"  // RTK Query endpoint (builder.query/mutation)
+	KindEndpoint   = "endpoint"  // RTK Query endpoint (builder.query/mutation) OR Postman request
+	KindModule     = "module"    // Terraform module block
+	KindVariable   = "variable"  // Terraform variable block
+	KindOutput     = "output"    // Terraform output block
+	KindTerm       = "term"      // KB dictionary term entry
 )
 
 // Scope constants live in scope.go — already defined for the v1 corpus

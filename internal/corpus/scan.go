@@ -16,9 +16,37 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Scan dispatches to per-language extractors by file extension under
-// cfg.SourceRoot. Day 1 added Java; Day 3 added TypeScript (.ts + .tsx).
-// HCL / JSON / Markdown extractors land in Day 4-5.
+// extractFunc is the per-language extractor signature.
+type extractFunc func(absPath, relPath string, cfg ScanConfig) ([]Symbol, error)
+
+// repoExtractProfile is the dispatch entry for one repo: which file
+// extensions to walk, which extractor to call, and an optional
+// per-path exclude predicate (test files, backup files, etc.).
+type repoExtractProfile struct {
+	exts    []string
+	extract extractFunc
+	exclude func(path string) bool
+}
+
+func repoProfile(repo string) (repoExtractProfile, bool) {
+	switch repo {
+	case "core-api":
+		return repoExtractProfile{exts: []string{".java"}, extract: extractJava}, true
+	case "akademia-plus-web", "elatusdev-web", "akademia-plus-central", "akademia-plus-go":
+		return repoExtractProfile{exts: []string{".ts", ".tsx"}, extract: extractTypeScript, exclude: isTestFile}, true
+	case "infra":
+		return repoExtractProfile{exts: []string{".tf"}, extract: extractHCL}, true
+	case "core-api-e2e":
+		return repoExtractProfile{exts: []string{".json"}, extract: extractPostman, exclude: isPostmanBackup}, true
+	case "knowledge-base":
+		return repoExtractProfile{exts: []string{".md", ".yaml"}, extract: extractKB, exclude: isKBNonCurated}, true
+	}
+	return repoExtractProfile{}, false
+}
+
+// Scan dispatches to a per-repo extractor profile (see repoProfile),
+// walks SourceRoot for that profile's file extensions, runs the
+// extractor per file, and writes the aggregated Symbols as YAML.
 func Scan(cfg ScanConfig) (ScanStats, error) {
 	started := time.Now()
 	stats := ScanStats{ByKind: map[string]int{}, ByConcern: map[string]int{}}
@@ -33,47 +61,31 @@ func Scan(cfg ScanConfig) (ScanStats, error) {
 		return stats, fmt.Errorf("scan: OutPath required unless DryRun")
 	}
 
-	var symbols []Symbol
+	prof, ok := repoProfile(cfg.Repo)
+	if !ok {
+		return stats, fmt.Errorf("scan: no extractor profile for repo %q", cfg.Repo)
+	}
 
-	// Java
-	javaFiles, err := collectByExt(cfg.SourceRoot, ".java")
+	files, err := collectByExts(cfg.SourceRoot, prof.exts...)
 	if err != nil {
-		return stats, fmt.Errorf("scan: walk %s for .java: %w", cfg.SourceRoot, err)
+		return stats, fmt.Errorf("scan: walk %s for %v: %w", cfg.SourceRoot, prof.exts, err)
 	}
-	if cfg.Verbose && len(javaFiles) > 0 {
-		fmt.Printf("  %d .java files under %s\n", len(javaFiles), cfg.SourceRoot)
-	}
-	for _, path := range javaFiles {
-		rel, _ := filepath.Rel(cfg.RepoRoot, path)
-		extracted, err := extractJava(path, rel, cfg)
-		if err != nil {
-			if cfg.Verbose {
-				fmt.Printf("  WARN %s: %v\n", rel, err)
-			}
+	var kept []string
+	for _, p := range files {
+		if prof.exclude != nil && prof.exclude(p) {
 			continue
 		}
-		symbols = append(symbols, extracted...)
-		stats.FilesScanned++
+		kept = append(kept, p)
+	}
+	if cfg.Verbose && len(files) > 0 {
+		fmt.Printf("  %d file(s) of %v under %s (%d excluded)\n",
+			len(kept), prof.exts, cfg.SourceRoot, len(files)-len(kept))
 	}
 
-	// TypeScript (.ts + .tsx; test files filtered out by isTestFile)
-	tsFiles, err := collectByExts(cfg.SourceRoot, ".ts", ".tsx")
-	if err != nil {
-		return stats, fmt.Errorf("scan: walk %s for .ts/.tsx: %w", cfg.SourceRoot, err)
-	}
-	var tsKept []string
-	for _, p := range tsFiles {
-		if !isTestFile(p) {
-			tsKept = append(tsKept, p)
-		}
-	}
-	if cfg.Verbose && len(tsFiles) > 0 {
-		fmt.Printf("  %d .ts/.tsx files under %s (%d excluded as tests)\n",
-			len(tsKept), cfg.SourceRoot, len(tsFiles)-len(tsKept))
-	}
-	for _, path := range tsKept {
+	var symbols []Symbol
+	for _, path := range kept {
 		rel, _ := filepath.Rel(cfg.RepoRoot, path)
-		extracted, err := extractTypeScript(path, rel, cfg)
+		extracted, err := prof.extract(path, rel, cfg)
 		if err != nil {
 			if cfg.Verbose {
 				fmt.Printf("  WARN %s: %v\n", rel, err)
@@ -121,14 +133,9 @@ func Scan(cfg ScanConfig) (ScanStats, error) {
 	return stats, nil
 }
 
-// collectByExt walks root and returns every regular file whose name has
-// the given extension. Skips common artefact dirs.
-func collectByExt(root, ext string) ([]string, error) {
-	return collectByExts(root, ext)
-}
-
-// collectByExts is collectByExt for multiple extensions in a single walk.
-// Skips the same artefact dirs plus webapp/mobile-specific build outputs.
+// collectByExts walks root and returns every regular file whose name
+// has any of the given extensions. Skips common artefact dirs plus
+// webapp / mobile-specific build outputs.
 func collectByExts(root string, exts ...string) ([]string, error) {
 	skip := map[string]struct{}{
 		".git": {}, "node_modules": {}, "target": {}, "build": {},

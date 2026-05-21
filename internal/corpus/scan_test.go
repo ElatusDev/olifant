@@ -273,6 +273,270 @@ func TestClassifyTSCallable(t *testing.T) {
 	}
 }
 
+func TestExtractHCL_ResourceDataModuleVariableOutputProvider(t *testing.T) {
+	src := `# Sample terraform file
+
+provider "aws" {
+  region = var.region
+}
+
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "app_storage" {
+  bucket = "akademiaplus-app"
+}
+
+module "networking" {
+  source = "./modules/networking"
+}
+
+output "vpc_id" {
+  value = module.networking.vpc_id
+}
+`
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "infra")
+	srcRoot := filepath.Join(repoRoot, "terraform")
+	tfPath := filepath.Join(srcRoot, "sample.tf")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tfPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syms, err := extractHCL(tfPath, "terraform/sample.tf", ScanConfig{
+		Repo:     "infra",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractHCL: %v", err)
+	}
+
+	wantKinds := map[string]int{
+		KindResource:  2, // resource + data
+		KindModule:    1,
+		KindVariable:  1,
+		KindOutput:    1,
+		KindConfigKey: 1, // provider
+	}
+	got := map[string]int{}
+	for _, s := range syms {
+		k, _ := s.Tags[AxisKind].(string)
+		got[k]++
+	}
+	for k, n := range wantKinds {
+		if got[k] != n {
+			t.Errorf("kind=%s: got %d want %d (all: %+v)", k, got[k], n, got)
+		}
+	}
+	// Resource text should be "type.name"
+	for _, s := range syms {
+		if s.Tags[AxisKind] == KindResource && !strings.Contains(s.Text, ".") {
+			t.Errorf("resource text missing type.name: %q", s.Text)
+		}
+		if s.Tags[AxisLanguage] != LangHCL {
+			t.Errorf("language: got %v want %s for symbol %q", s.Tags[AxisLanguage], LangHCL, s.Text)
+		}
+	}
+}
+
+func TestExtractPostman_CollectionFoldersRequestsVariables(t *testing.T) {
+	src := `{
+  "info": {"name": "task-service-e2e", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+  "item": [
+    {"name": "Setup", "item": [
+      {"name": "LoginInternalForTokens", "request": {"method": "POST"}}
+    ]},
+    {"name": "CRUD", "item": [
+      {"name": "CreateTask", "request": {"method": "POST"}},
+      {"name": "GetTask", "request": {"method": "GET"}}
+    ]},
+    {"name": "TopLevelRequest", "request": {"method": "GET"}}
+  ],
+  "variable": [{"key": "authToken", "value": ""}]
+}`
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "core-api-e2e")
+	jsonPath := filepath.Join(repoRoot, "Postman Collections", "task-service-e2e.postman_collection.json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syms, err := extractPostman(jsonPath, "Postman Collections/task-service-e2e.postman_collection.json", ScanConfig{
+		Repo:     "core-api-e2e",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractPostman: %v", err)
+	}
+
+	wantKinds := map[string]int{
+		KindResource:  3, // collection + 2 folders
+		KindEndpoint:  4, // 3 leaf requests + 1 top-level
+		KindConfigKey: 1, // variable
+	}
+	got := map[string]int{}
+	for _, s := range syms {
+		k, _ := s.Tags[AxisKind].(string)
+		got[k]++
+	}
+	for k, n := range wantKinds {
+		if got[k] != n {
+			t.Errorf("kind=%s: got %d want %d (all: %+v)", k, got[k], n, got)
+		}
+	}
+	// Verify ScopeE2E + language=json on at least one symbol.
+	if len(syms) == 0 {
+		t.Fatal("no symbols emitted")
+	}
+	if syms[0].Tags[AxisLanguage] != LangJSON {
+		t.Errorf("language: got %v want %s", syms[0].Tags[AxisLanguage], LangJSON)
+	}
+	if syms[0].Tags[AxisScope] != ScopeE2E {
+		t.Errorf("scope: got %v want %s", syms[0].Tags[AxisScope], ScopeE2E)
+	}
+}
+
+func TestExtractKBMarkdown_IDHeadersAndConceptHeaders(t *testing.T) {
+	src := `# Decision Log
+
+> Chronological log.
+
+## D1: MongoDB as ETL Staging — 2026-03-09
+
+Body.
+
+## AP3: Polling Without Max Retry
+
+Body.
+
+## Domain Object Pattern
+
+Body — no ID prefix, captured as concept.
+
+### The Problem
+
+(H3 — still captured, no ID)
+`
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "knowledge-base")
+	mdPath := filepath.Join(repoRoot, "decisions", "log.md")
+	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mdPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syms, err := extractKB(mdPath, "decisions/log.md", ScanConfig{
+		Repo:     "knowledge-base",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractKB markdown: %v", err)
+	}
+
+	idTexts := map[string]string{}
+	conceptTexts := map[string]bool{}
+	for _, s := range syms {
+		k, _ := s.Tags[AxisKind].(string)
+		switch k {
+		case KindID:
+			fam, _ := s.Tags[AxisIDFamily].(string)
+			idTexts[s.Text] = fam
+		case KindClass:
+			conceptTexts[s.Text] = true
+		}
+	}
+	if got := idTexts["D1"]; got != IDFamilyDecision {
+		t.Errorf("D1: got id_family=%q want %q", got, IDFamilyDecision)
+	}
+	if got := idTexts["AP3"]; got != IDFamilyAntiPattern {
+		t.Errorf("AP3: got id_family=%q want %q", got, IDFamilyAntiPattern)
+	}
+	if !conceptTexts["Domain Object Pattern"] {
+		t.Errorf("missing concept header 'Domain Object Pattern' in %+v", conceptTexts)
+	}
+}
+
+func TestExtractKBYAML_DictionaryTerms(t *testing.T) {
+	src := `- term: ABB-01
+  category: domain.anti_pattern.backend
+  definition: Long Method
+  cites:
+    - standards/ANTI-PATTERNS-BACKEND.yaml#ABB-01
+- term: ABB-02
+  category: domain.anti_pattern.backend
+  definition: God Class
+`
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "knowledge-base")
+	yamlPath := filepath.Join(repoRoot, "dictionary", "backend", "domain.yaml")
+	if err := os.MkdirAll(filepath.Dir(yamlPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(yamlPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syms, err := extractKB(yamlPath, "dictionary/backend/domain.yaml", ScanConfig{
+		Repo:     "knowledge-base",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractKB yaml: %v", err)
+	}
+	if len(syms) != 2 {
+		t.Fatalf("expected 2 term symbols, got %d (%+v)", len(syms), syms)
+	}
+	for _, s := range syms {
+		if s.Tags[AxisKind] != KindTerm {
+			t.Errorf("expected kind=term, got %v for %q", s.Tags[AxisKind], s.Text)
+		}
+		if s.Tags[AxisLanguage] != LangYAML {
+			t.Errorf("expected language=yaml, got %v", s.Tags[AxisLanguage])
+		}
+	}
+}
+
+func TestIsKBNonCurated(t *testing.T) {
+	cases := []struct {
+		p    string
+		want bool
+	}{
+		{"decisions/log.md", false},
+		{"anti-patterns/catalog.md", false},
+		{"patterns/backend.md", false},
+		{"dictionary/backend/domain.yaml", false},
+		{"retrospectives/some-retro.md", true},
+		{"architecture/some-doc.md", true},
+		{"README.md", true},
+	}
+	for _, tc := range cases {
+		if got := isKBNonCurated(tc.p); got != tc.want {
+			t.Errorf("isKBNonCurated(%q) = %v want %v", tc.p, got, tc.want)
+		}
+	}
+}
+
+func TestIsPostmanBackup(t *testing.T) {
+	if !isPostmanBackup("foo.json.bak") {
+		t.Error("expected true for foo.json.bak")
+	}
+	if isPostmanBackup("foo.json") {
+		t.Error("expected false for foo.json")
+	}
+}
+
 func TestScanEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repoRoot := filepath.Join(dir, "core-api")
