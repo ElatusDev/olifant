@@ -184,6 +184,15 @@ func concernsFromPath(relPath string) []string {
 		{"endpoint", ConcernAPIContract},
 		{"/test/", ConcernTesting},
 		{"src/test", ConcernTesting},
+		// TS / webapp / mobile path heuristics. Added 2026-05-21 for
+		// Day 3 (TS extractor). Anchored substrings ('/components/' etc.)
+		// avoid colliding with Java class names that contain the words.
+		{"/components/", ConcernUI},
+		{"/pages/", ConcernUI},
+		{"/screens/", ConcernUI},
+		{"/theme/", ConcernUI},
+		{"/i18n/", ConcernUI},
+		{"/locales/", ConcernUI},
 	} {
 		if containsCI(lower, m.needle) {
 			add(m.concern)

@@ -53,6 +53,9 @@ const (
 	KindFile       = "file"
 	KindID         = "id"     // KB cross-reference IDs (D17, AP3, etc.)
 	KindAcronym    = "acronym"
+	KindComponent  = "component" // React/React-Native function component
+	KindHook       = "hook"      // React hook (useXxx naming convention)
+	KindEndpoint   = "endpoint"  // RTK Query endpoint (builder.query/mutation)
 )
 
 // Scope constants live in scope.go — already defined for the v1 corpus
