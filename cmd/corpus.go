@@ -99,6 +99,12 @@ func corpusScan(args []string) int {
 				return 2
 			}
 			sr = filepath.Join(rr, *module, "src", "main", "java")
+		case "akademia-plus-web", "elatusdev-web", "akademia-plus-central", "akademia-plus-go":
+			if *module == "" {
+				fmt.Fprintln(os.Stderr, "corpus scan: --module required for webapp/mobile repos (feature dir name under src/features/)")
+				return 2
+			}
+			sr = filepath.Join(rr, "src", "features", *module)
 		default:
 			fmt.Fprintf(os.Stderr, "corpus scan: source-root autodetection not yet implemented for repo %q (use --source-root)\n", *repo)
 			return 1
@@ -123,7 +129,17 @@ func corpusScan(args []string) int {
 		if name == "" {
 			name = "default"
 		}
-		outPath = filepath.Join(kbDir, "corpus", "v2-curriculum", "vocab", *repo, name+".yaml")
+		// Webapp/mobile vocab is grouped under a 'features/' subdir per
+		// workflow §6 AC convention (vocab/<repo>/features/<f>.yaml).
+		// core-api keeps the flat vocab/<repo>/<module>.yaml layout.
+		var pathParts []string
+		switch *repo {
+		case "akademia-plus-web", "elatusdev-web", "akademia-plus-central", "akademia-plus-go":
+			pathParts = []string{kbDir, "corpus", "v2-curriculum", "vocab", *repo, "features", name + ".yaml"}
+		default:
+			pathParts = []string{kbDir, "corpus", "v2-curriculum", "vocab", *repo, name + ".yaml"}
+		}
+		outPath = filepath.Join(pathParts...)
 	}
 	if outPath != "" {
 		outPath, _ = filepath.Abs(outPath)

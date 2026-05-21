@@ -129,6 +129,150 @@ func TestScanRequiredArgs(t *testing.T) {
 	}
 }
 
+func TestExtractTypeScript_ComponentHookTypeInterfaceEnumConstEndpoint(t *testing.T) {
+	src := "import React from 'react';\n" +
+		"\n" +
+		"export interface AuthUser {\n" +
+		"  uid: string;\n" +
+		"  email: string;\n" +
+		"}\n" +
+		"\n" +
+		"export type LoginResult = { token: string };\n" +
+		"\n" +
+		"export enum AuthStatus { Idle, Loading, Succeeded, Failed }\n" +
+		"\n" +
+		"export const API_LOGIN_PATH = '/v1/security/login';\n" +
+		"\n" +
+		"const LoginPage: React.FC = () => {\n" +
+		"  return <div>login</div>;\n" +
+		"};\n" +
+		"\n" +
+		"export function useAuthGuard(): boolean {\n" +
+		"  return true;\n" +
+		"}\n" +
+		"\n" +
+		"export const useGoogleSignIn = () => {\n" +
+		"  return null;\n" +
+		"};\n" +
+		"\n" +
+		"export const authApi = baseApi.injectEndpoints({\n" +
+		"  endpoints: (builder) => ({\n" +
+		"    loginUser: builder.mutation<AuthTokenResponseDTO, LoginRequestDTO>({ query: c => ({ url: '/x', method: 'POST', body: c }) }),\n" +
+		"    getCurrentUser: builder.query<AuthUser, void>({ query: () => '/me' }),\n" +
+		"  }),\n" +
+		"});\n"
+
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "akademia-plus-web")
+	srcRoot := filepath.Join(repoRoot, "src", "features", "auth")
+	tsPath := filepath.Join(srcRoot, "Sample.tsx")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tsPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syms, err := extractTypeScript(tsPath, "src/features/auth/Sample.tsx", ScanConfig{
+		Repo:     "akademia-plus-web",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractTypeScript: %v", err)
+	}
+
+	wantKinds := map[string]int{
+		KindInterface: 1,
+		KindType:      1,
+		KindEnum:      1,
+		KindConstant:  1,
+		KindComponent: 1,
+		KindHook:      2,
+		KindEndpoint:  2,
+	}
+	got := map[string]int{}
+	for _, s := range syms {
+		k, _ := s.Tags[AxisKind].(string)
+		got[k]++
+	}
+	for k, n := range wantKinds {
+		if got[k] != n {
+			t.Errorf("kind=%s: got %d want %d (all: %+v)", k, got[k], n, got)
+		}
+	}
+
+	// Tag sanity on the component symbol.
+	var comp *Symbol
+	for i := range syms {
+		if syms[i].Tags[AxisKind] == KindComponent {
+			comp = &syms[i]
+			break
+		}
+	}
+	if comp == nil {
+		t.Fatal("no component symbol found")
+	}
+	if comp.Tags[AxisLanguage] != LangTypeScript {
+		t.Errorf("language: got %v want %s", comp.Tags[AxisLanguage], LangTypeScript)
+	}
+	if comp.Tags[AxisScope] != ScopeWebapp {
+		t.Errorf("scope: got %v want %s", comp.Tags[AxisScope], ScopeWebapp)
+	}
+	concerns, _ := comp.Tags[AxisConcern].([]string)
+	var gotSec bool
+	for _, c := range concerns {
+		if c == ConcernSecurity {
+			gotSec = true
+		}
+	}
+	if !gotSec {
+		t.Errorf("concerns missing security (path contains 'auth'): %v", concerns)
+	}
+}
+
+func TestIsTestFile(t *testing.T) {
+	cases := []struct {
+		p    string
+		want bool
+	}{
+		{"src/features/auth/__tests__/X.test.ts", true},
+		{"src/features/auth/X.test.tsx", true},
+		{"src/features/auth/X.spec.ts", true},
+		{"src/features/auth/X.spec.tsx", true},
+		{"e2e/features/auth.test.ts", true},
+		{"tests/integration/x.ts", true},
+		{"src/features/auth/X.ts", false},
+		{"src/features/auth/X.tsx", false},
+		{"src/features/auth/components/LoginForm.tsx", false},
+	}
+	for _, tc := range cases {
+		if got := isTestFile(tc.p); got != tc.want {
+			t.Errorf("isTestFile(%q) = %v want %v", tc.p, got, tc.want)
+		}
+	}
+}
+
+func TestClassifyTSCallable(t *testing.T) {
+	cases := []struct {
+		n, want string
+	}{
+		{"useAuth", KindHook},
+		{"useState", KindHook},
+		{"LoginPage", KindComponent},
+		{"AuthProvider", KindComponent},
+		{"handleClick", ""}, // camelCase helper — skipped
+		{"x", ""},
+		{"use", ""},        // too short
+		{"useany", ""},     // 'use' + lowercase — not a hook by convention
+		{"User", KindComponent},
+	}
+	for _, tc := range cases {
+		if got := classifyTSCallable(tc.n); got != tc.want {
+			t.Errorf("classifyTSCallable(%q) = %q want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestScanEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repoRoot := filepath.Join(dir, "core-api")
