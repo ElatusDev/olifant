@@ -537,6 +537,181 @@ func TestIsPostmanBackup(t *testing.T) {
 	}
 }
 
+func TestExtractProse_TokenizationAndRules(t *testing.T) {
+	src := "# Sample Doc\n" +
+		"\n" +
+		"Tests are NOT optional. Write unit tests with each phase.\n" +
+		"\n" +
+		"You MUST never push without running the full build first. " +
+		"Run the test suite via npm test.\n" +
+		"\n" +
+		"This sentence is a regular affirmation that should be tagged as such.\n" +
+		"\n" +
+		"```bash\n" +
+		"echo 'this code block should be skipped entirely'\n" +
+		"```\n" +
+		"\n" +
+		"> A blockquote should also be skipped.\n" +
+		"\n" +
+		"If the build fails, then halt immediately.\n"
+
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "knowledge-base")
+	mdPath := filepath.Join(repoRoot, "patterns", "sample.md")
+	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mdPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sents, err := extractProse(mdPath, "patterns/sample.md", ScanConfig{
+		Repo:     "knowledge-base",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("extractProse: %v", err)
+	}
+	if len(sents) < 5 {
+		t.Fatalf("expected ≥5 sentences, got %d (%+v)", len(sents), sents)
+	}
+
+	// No sentence should reference the code-block content.
+	for _, s := range sents {
+		if strings.Contains(s.Text, "echo") {
+			t.Errorf("code block leaked into sentence: %q", s.Text)
+		}
+		if strings.Contains(s.Text, "blockquote") {
+			t.Errorf("blockquote leaked into sentence: %q", s.Text)
+		}
+	}
+
+	// At least one MUST → mandatory or forbidden modality must fire.
+	gotModal := map[string]bool{}
+	for _, s := range sents {
+		if m, ok := s.Tags[AxisModality].(string); ok {
+			gotModal[m] = true
+		}
+	}
+	if !gotModal[ModalForbidden] && !gotModal[ModalMandatory] {
+		t.Errorf("expected at least one mandatory/forbidden modality from MUST/MUST NOT cues, got %+v", gotModal)
+	}
+
+	// Conditional sentence should be tagged.
+	gotConditional := false
+	for _, s := range sents {
+		if s.Tags[AxisSyntactic] == SyntConditional {
+			gotConditional = true
+		}
+	}
+	if !gotConditional {
+		t.Errorf("expected at least one conditional from 'If ... then' sentence")
+	}
+
+	// Scope and language are constants from path/repo.
+	for _, s := range sents {
+		if s.Tags[AxisLanguage] != LangMarkdown {
+			t.Errorf("language: got %v want %s", s.Tags[AxisLanguage], LangMarkdown)
+		}
+		if s.Tags[AxisScope] != ScopePlatformProcess {
+			t.Errorf("scope: got %v want %s", s.Tags[AxisScope], ScopePlatformProcess)
+		}
+	}
+}
+
+func TestClassifySyntactic(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"This is a statement.", SyntAffirmation},
+		{"Is this a question?", SyntQuestion},
+		{"Run the build now!", SyntImperative},
+		{"Run the build now.", SyntImperative},
+		{"Use the X tool.", SyntImperative},
+		{"If x then y.", SyntConditional},
+		{"do not delete the file.", SyntNegation},
+		{"This is not allowed.", SyntNegation},
+	}
+	for _, tc := range cases {
+		got := classifySyntactic(tc.in)
+		if got != tc.want {
+			t.Errorf("classifySyntactic(%q) = %q want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestClassifyModality(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"Tests MUST be written before code.", ModalMandatory},
+		{"This MUST NOT be skipped.", ModalForbidden},
+		{"Code should be reviewed before merge.", ModalRecommended},
+		{"You may add comments where helpful.", ModalAllowed},
+		{"HARD RULE: never push without testing.", ModalForbidden},
+		{"Just a regular sentence.", ""},
+	}
+	for _, tc := range cases {
+		got := classifyModality(tc.in)
+		if got != tc.want {
+			t.Errorf("classifyModality(%q) = %q want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestIsProseCandidate(t *testing.T) {
+	cases := []struct {
+		repo, path string
+		want       bool
+	}{
+		{"core-api", "any/path/README.md", true},
+		{"knowledge-base", "patterns/backend.md", true},
+		{"knowledge-base", "anti-patterns/catalog.md", true},
+		{"knowledge-base", "decisions/log.md", true},
+		{"knowledge-base", "standards/SECURITY.md", true},
+		{"knowledge-base", "architecture/DESIGN.md", true},
+		{"knowledge-base", "skills/SKILL.md", true},
+		{"knowledge-base", "templates/foo.md", true},
+		{"knowledge-base", "dictionary/backend/domain.md", true},
+		{"knowledge-base", "runbooks/x.md", true},
+		{"knowledge-base", "retrospectives/foo.md", false},
+		{"knowledge-base", "operations/x.md", false},
+		{"knowledge-base", "audit-report/y.md", false},
+	}
+	for _, tc := range cases {
+		if got := isProseCandidate(tc.repo, tc.path); got != tc.want {
+			t.Errorf("isProseCandidate(%q, %q) = %v want %v", tc.repo, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestSplitSentences(t *testing.T) {
+	got := splitSentences("First sentence. Second one! Third? End.")
+	if len(got) != 4 {
+		t.Errorf("expected 4 sentences, got %d (%+v)", len(got), got)
+	}
+}
+
+func TestIsMeaningfulSentence(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"This is a meaningful sentence.", true},
+		{"too short", false},
+		{"NoSpacesOnlyOneWord", false},
+		{"!!!@@@###$$$%%%", false},
+		{"A real sentence with several words.", true},
+	}
+	for _, tc := range cases {
+		if got := isMeaningfulSentence(tc.in); got != tc.want {
+			t.Errorf("isMeaningfulSentence(%q) = %v want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestScanEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repoRoot := filepath.Join(dir, "core-api")
