@@ -20,6 +20,11 @@ type RunConfig struct {
 	KBRoot       string // for short-term writes + validator load
 	OutDir       string // where to write run results
 	Verbose      bool
+
+	// V2Collection — non-empty switches retrieval to the RAG-pivot v2 path
+	// (single tag-indexed Chroma collection, scope filtered via $in). Empty
+	// preserves the legacy v1 5-family × N-scope retrieval.
+	V2Collection string
 }
 
 // LoadSuite reads a suite YAML from disk.
@@ -118,6 +123,7 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 			Verbose:            false,
 			Validator:          validator,
 			MaxValidateRetries: 1,
+			V2Collection:       cfg.V2Collection,
 		})
 		cancel()
 

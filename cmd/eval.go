@@ -33,6 +33,7 @@ func evalRun(args []string) int {
 	out := fs.String("out", "", "output directory (default: <kb-root>/short-term/eval-runs/)")
 	verbose := fs.Bool("v", false, "verbose progress")
 	timeoutSec := fs.Int("timeout", 3600, "overall timeout in seconds")
+	retrieval := fs.String("retrieval", "", "RAG-pivot v2 collection name (e.g., olifant-v2-curriculum); empty = legacy v1 retrieval")
 	_ = fs.Parse(args)
 
 	if *suitePath == "" {
@@ -70,6 +71,7 @@ func evalRun(args []string) int {
 		KBRoot:       kbRoot,
 		OutDir:       outDir,
 		Verbose:      *verbose,
+		V2Collection: *retrieval,
 	})
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, "olifant eval run:", runErr)
