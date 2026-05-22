@@ -15,7 +15,7 @@ import (
 	"github.com/ElatusDev/olifant/internal/corpus"
 )
 
-// Corpus dispatches `olifant corpus <build|diff|index|scan|prose|classify|stats>`.
+// Corpus dispatches `olifant corpus <build|diff|index|index-v2|scan|prose|classify|stats>`.
 //
 // build/diff/index belong to the v1 corpus pipeline (ChromaDB indexing,
 // per platform/knowledge-base/corpus/CORPUS-V1.md). scan/prose/stats
@@ -23,9 +23,13 @@ import (
 // olifant-fine-tune-v2-corpus-curriculum-workflow.md) — same package
 // because they share the corpus root abstraction but emit different
 // downstream artefacts (Chunk JSONL vs Symbol/Sentence YAML).
+//
+// index-v2 belongs to the RAG pivot (olifant-rag-pivot-workflow.md
+// Phase A1): walks the v2-curriculum YAMLs and upserts into a fresh
+// Chroma collection with tag-axis metadata preserved.
 func Corpus(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|diff|index|scan|prose|stats)")
+		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|diff|index|index-v2|scan|prose|classify|stats)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -38,6 +42,8 @@ func Corpus(args []string) int {
 		return 1
 	case "index":
 		return corpusIndex(rest)
+	case "index-v2":
+		return corpusIndexV2(rest)
 	case "scan":
 		return corpusScan(rest)
 	case "prose":
@@ -477,6 +483,130 @@ func corpusBuild(args []string) int {
 	if err := corpus.Build(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "corpus build:", err)
 		return 1
+	}
+	return 0
+}
+
+// corpusIndexV2 is the RAG-pivot Phase A1 indexer: walks
+// <kb-root>/corpus/v2-curriculum/{vocab,prose}/**/*.yaml, embeds via
+// nomic-embed-text, and upserts into a single Chroma collection
+// (default: olifant-v2-curriculum) with tag-axis metadata preserved.
+// The v1 indexer + corpus_<scope> collections are left untouched.
+func corpusIndexV2(args []string) int {
+	fs := flag.NewFlagSet("corpus index-v2", flag.ExitOnError)
+	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect)")
+	collection := fs.String("collection", corpus.DefaultV2Collection, "Chroma collection name")
+	batchSize := fs.Int("batch", 32, "items per embed/upsert batch")
+	onlyKinds := fs.String("only-kinds", "", "comma-separated subset of {vocab,prose} (default: both)")
+	verbose := fs.Bool("v", false, "verbose progress")
+	dryRun := fs.Bool("dry-run", false, "walk + count only; skip embed + upsert")
+	smoke := fs.Bool("smoke", false, "after upsert, run 5 canned retrieval smoke queries")
+	smokeOut := fs.String("smoke-out", "", "write smoke report markdown here (default: <kb-root>/short-term/recovery/<utc-ts>-a1.md when --smoke is set)")
+	timeoutSec := fs.Int("timeout", 1800, "overall timeout in seconds")
+	_ = fs.Parse(args)
+
+	root := *kbRoot
+	if root == "" {
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			root = filepath.Dir(found)
+		} else {
+			fmt.Fprintln(os.Stderr, "corpus index-v2: --kb-root not specified and knowledge-base not found")
+			return 1
+		}
+	}
+	root, _ = filepath.Abs(root)
+
+	var only []string
+	if *onlyKinds != "" {
+		for _, s := range strings.Split(*onlyKinds, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				only = append(only, s)
+			}
+		}
+	}
+
+	out := *smokeOut
+	if *smoke && out == "" {
+		ts := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+		out = filepath.Join(root, "short-term", "recovery", ts+"-a1.md")
+	}
+
+	rt := config.Resolve()
+	fmt.Println("config:", rt.String())
+	fmt.Println("kb-root:    ", root)
+	fmt.Println("collection: ", *collection)
+	if len(only) > 0 {
+		fmt.Println("only-kinds: ", strings.Join(only, ","))
+	}
+	if *dryRun {
+		fmt.Println("mode:        dry-run")
+	}
+	if *smoke {
+		fmt.Println("smoke-out:  ", out)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
+	defer cancel()
+
+	stats, err := corpus.IndexV2(ctx, corpus.IndexV2Config{
+		KBRoot:     root,
+		Collection: *collection,
+		OllamaURL:  rt.OllamaURL,
+		ChromaURL:  rt.ChromaURL,
+		Embedder:   rt.Embedder,
+		Tenant:     rt.ChromaTenant,
+		Database:   rt.ChromaDatabase,
+		BatchSize:  *batchSize,
+		OnlyKinds:  only,
+		Verbose:    *verbose,
+		DryRun:     *dryRun,
+		Smoke:      *smoke,
+		SmokeOut:   out,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus index-v2:", err)
+		return 1
+	}
+
+	fmt.Println("index-v2 summary:")
+	fmt.Printf("  vocab files:        %d\n", stats.VocabFilesRead)
+	fmt.Printf("  prose files:        %d\n", stats.ProseFilesRead)
+	fmt.Printf("  symbols read:       %d\n", stats.SymbolsRead)
+	fmt.Printf("  sentences read:     %d\n", stats.SentencesRead)
+	fmt.Printf("  chunks upserted:    %d\n", stats.ChunksUpserted)
+	fmt.Printf("  batches sent:       %d\n", stats.BatchesSent)
+	fmt.Printf("  elapsed:            %s\n", stats.Elapsed.Round(time.Millisecond))
+	if len(stats.ByKind) > 0 {
+		fmt.Println("  by item kind:")
+		ks := make([]string, 0, len(stats.ByKind))
+		for k := range stats.ByKind {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		for _, k := range ks {
+			fmt.Printf("    %-12s %d\n", k, stats.ByKind[k])
+		}
+	}
+	if len(stats.ByRepo) > 0 {
+		fmt.Println("  by repo:")
+		ks := make([]string, 0, len(stats.ByRepo))
+		for k := range stats.ByRepo {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		for _, k := range ks {
+			fmt.Printf("    %-24s %d\n", k, stats.ByRepo[k])
+		}
+	}
+	if len(stats.Smoke) > 0 {
+		fmt.Println("  smoke queries:")
+		for i, r := range stats.Smoke {
+			fmt.Printf("    Q%d: %s  (%d hits)\n", i+1, r.Query, len(r.Hits))
+		}
+		if out != "" {
+			fmt.Println("  smoke report:    ", out)
+		}
 	}
 	return 0
 }
