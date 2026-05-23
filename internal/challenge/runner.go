@@ -353,20 +353,24 @@ func buildChallengePrompt(request string, hits []retrievedHit) string {
 	sb.WriteString("USER REQUEST:\n")
 	sb.WriteString(strings.TrimSpace(request))
 	sb.WriteString("\n\nRETRIEVED CONTEXT (top corpus chunks ordered by similarity):\n\n")
-	for i, h := range hits {
+	for _, h := range hits {
 		source, _ := h.Meta["source"].(string)
 		anchor, _ := h.Meta["source_anchor"].(string)
 		aid, _ := h.Meta["artifact_id"].(string)
-		fmt.Fprintf(&sb, "--- chunk %d (distance=%.4f, scope=%s", i+1, h.Distance, h.Scope)
-		if aid != "" {
-			fmt.Fprintf(&sb, ", artifact_id=%s", aid)
+		// Source/anchor/artifact_id come FIRST so the model latches onto
+		// the citable identifier (not a display-only chunk index). A2.5
+		// drops the "chunk N" prefix entirely after the eval showed the
+		// model cargo-culting "chunk2"/"chunk4" into cites[].
+		sb.WriteString("---")
+		switch {
+		case aid != "":
+			fmt.Fprintf(&sb, " artifact_id=%s", aid)
+		case anchor != "":
+			fmt.Fprintf(&sb, " source=%s", anchor)
+		case source != "":
+			fmt.Fprintf(&sb, " source=%s", source)
 		}
-		if anchor != "" {
-			fmt.Fprintf(&sb, ", anchor=%s", anchor)
-		} else if source != "" {
-			fmt.Fprintf(&sb, ", source=%s", source)
-		}
-		sb.WriteString(") ---\n")
+		fmt.Fprintf(&sb, " (distance=%.4f, scope=%s) ---\n", h.Distance, h.Scope)
 		sb.WriteString(h.Doc)
 		if !strings.HasSuffix(h.Doc, "\n") {
 			sb.WriteByte('\n')
@@ -398,13 +402,22 @@ PLATFORM VOCABULARY (canonical — use these exact identifiers; reject substitut
 - Verdict enum (always one of): ` + "`VALID`" + `, ` + "`VALID_WITH_CAVEATS`" + `, ` + "`INVALID`" + `, ` + "`NEEDS_CLARIFICATION`" + `, ` + "`OUT_OF_SCOPE`" + `.
 
 HARD RULES:
-1. EVERY value in cites[] AND every entry in applicable_rules.{standards,patterns,anti_patterns_to_avoid,decisions_to_honor} MUST appear verbatim in the RETRIEVED CONTEXT — either as an artifact ID (D###, AP##, SB-##, SI-##, AMS-##, WA-..., TBU-##, ABS-##, …) or as a literal source path (e.g., core-api/.../Foo.java#L1-L80, decisions/log.yaml#D17). NEVER invent generic categories like "magic_strings", "hardcoded_secrets", "owasp_top10", "nist_800_53", "consistent_code_style", "single_responsibility_principle", "dependency_injection". If you cannot point to a retrieved chunk that names the rule, leave the slot empty.
+1. EVERY value in cites[] AND every entry in applicable_rules.{standards,patterns,anti_patterns_to_avoid,decisions_to_honor} MUST appear verbatim in the RETRIEVED CONTEXT — either as an artifact ID (D###, AP##, SB-##, SI-##, AMS-##, WA-..., TBU-##, ABS-##, …) or as a fully-qualified path with a repo or knowledge-base prefix (e.g., ` + "`core-api/.../Foo.java#L1-L80`" + `, ` + "`knowledge-base/decisions/log.yaml#D17`" + `). REJECTED cite shapes — never produce these: bare filenames like ` + "`README.md`" + `, ` + "`CLAUDE.md`" + ` or partial paths like ` + "`.claude/prompts/...`" + ` (not anchored to a repo); display labels like ` + "`chunk1`" + `, ` + "`chunk2`" + ` (those are retrieval ordering markers, not artifacts); generic categories like ` + "`magic_strings`" + `, ` + "`hardcoded_secrets`" + `, ` + "`owasp_top10`" + `, ` + "`nist_800_53`" + `, ` + "`consistent_code_style`" + `, ` + "`single_responsibility_principle`" + `, ` + "`dependency_injection`" + `. If you cannot point to a retrieved chunk that names the rule with a real artifact ID or fully-qualified path, leave the slot empty.
 
 2. INVALID requires CONCRETE EVIDENCE. You must identify a specific rule (anti-pattern ID, decision ID, standard rule ID) from the retrieved context that the request demonstrably violates, and a contradicts[] entry must cite it. Without that, the verdict is NOT INVALID — choose VALID_WITH_CAVEATS, NEEDS_CLARIFICATION, or OUT_OF_SCOPE instead. False INVALIDs are as harmful as false approvals.
 
 3. OUT_OF_SCOPE when the retrieved context does not address the request's actual topic — even if the request itself looks well-formed.
 
 4. The 'request' field MUST be the user's verbatim request, or a faithful one-sentence summary for very long inputs (code files). Do NOT put placeholders like "clarification_required" or "no_changes_required" in the 'request' field.
+
+5. VERDICT–CONTENT COHERENCE. The verdict you choose dictates which arrays MUST be non-empty:
+   - VALID → confirms[] MAY be non-empty; contradicts[] MUST be empty; clarify[] MAY be empty.
+   - VALID_WITH_CAVEATS → confirms[] OR clarify[] MUST have ≥1 entry (the caveat lives in one of them); contradicts[] MUST be empty.
+   - INVALID → contradicts[] MUST have ≥1 entry; cites in that entry MUST resolve to a real artifact ID or path.
+   - **NEEDS_CLARIFICATION → clarify[] MUST have ≥1 question.** Empty clarify[] with this verdict is invalid output — pick OUT_OF_SCOPE instead if you have no questions to ask, or VALID_WITH_CAVEATS if you have a non-blocking concern.
+   - OUT_OF_SCOPE → all of confirms/contradicts/clarify MAY be empty.
+
+6. CITE NON-EMPTINESS. Every entry in confirms[] AND every entry in contradicts[] MUST carry at least one resolvable cite in its ` + "`cites:`" + ` field. If you would emit a confirms/contradicts entry with no cites, drop the entry instead (or move its content to clarify[] as a question).
 
 VERDICT SEMANTICS:
 - VALID — aligns with platform rules; proceed: proceed_directly.
@@ -473,6 +486,28 @@ challenge:
     standards: []
     patterns: ["TenantScoped"]
     anti_patterns_to_avoid: [AP3]
+    decisions_to_honor: []
+  proceed: confirm_with_user
+
+EXAMPLE 4 — NEEDS_CLARIFICATION (ambiguous request, clarify[] populated per HARD RULE 5):
+
+User asks: "Add a screen for users to edit their profile information."
+Retrieved context contains mobile + webapp UI rules but doesn't specify the platform.
+
+challenge:
+  request: "Add a screen for users to edit their profile information."
+  verdict: NEEDS_CLARIFICATION
+  confirms: []
+  contradicts: []
+  clarify:
+    - question: "Is this for the webapp (akademia-plus-web / elatusdev-web) or one of the mobile apps (akademia-plus-central / akademia-plus-go)?"
+      why_asking: "The component stack and styling rules differ between MUI v7 (webapp) and RN Paper MD3 (mobile)"
+    - question: "Does 'profile information' include sensitive fields (auth credentials, payment) that require Keychain/Keystore handling?"
+      why_asking: "AsyncStorage / Redux Persist are forbidden for auth or PCI material per AMS-02"
+  applicable_rules:
+    standards: []
+    patterns: []
+    anti_patterns_to_avoid: []
     decisions_to_honor: []
   proceed: confirm_with_user
 
