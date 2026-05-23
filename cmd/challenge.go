@@ -78,6 +78,7 @@ func Challenge(args []string) int {
 	synth := fs.String("synth", "", "synthesizer model override")
 	codeFile := fs.String("file", "", "code file to review (frames input as review-request)")
 	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
+	retrieval := fs.String("retrieval", "", "RAG-pivot v2 collection name (e.g., olifant-v2-curriculum); empty = legacy v1 retrieval")
 	_ = fs.Parse(args)
 
 	var request string
@@ -173,6 +174,7 @@ func Challenge(args []string) int {
 		Verbose:            *verbose,
 		Validator:          validator,
 		MaxValidateRetries: 1,
+		V2Collection:       *retrieval,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "olifant challenge:", err)

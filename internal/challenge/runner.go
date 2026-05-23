@@ -40,6 +40,14 @@ type Config struct {
 	Verbose          bool
 	Validator        *CiteValidator // optional; nil disables cite validation
 	MaxValidateRetries int          // default 1 retry on cite hallucination
+
+	// V2 RAG-pivot retrieval — when V2Collection != "", retrieval queries
+	// a single olifant-v2-curriculum-style Chroma collection (tag-indexed)
+	// instead of the v1 5-families × N-scopes pattern. The v1 collections
+	// are not consulted in this mode; the v2 collection's `scope` metadata
+	// field is filtered via Chroma `where` ($in over Scopes ∪ universal).
+	// Phase A2 of olifant-rag-pivot-workflow.md.
+	V2Collection string
 }
 
 // Result is the final emitted artifact.
@@ -90,81 +98,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	embedMs := time.Since(embedStart).Milliseconds()
 
-	// 2. Retrieve from each scope, querying five collection families:
-	//      corpus_<scope>        — KB docs (specs, dictionaries, retros)
-	//      code_<scope>          — current code state (from `repo ingest`)
-	//      history_<scope>       — commit summaries (from `history index`)
-	//      code_history_<scope>  — file content at past commits
-	//      failure_modes_<scope> — curated eval-derived corrections
-	//                              (from `dataset index`)
+	// 2. Retrieve — two paths:
+	//      v2 RAG pivot (cfg.V2Collection != ""): single tag-indexed
+	//      collection queried with a where-clause scope filter.
+	//      v1 pipeline (default): 5 collection families × N scopes.
 	retrStart := time.Now()
-	scopes := cfg.Scopes
-	if len(scopes) == 0 {
-		scopes = []string{"universal", "backend", "webapp", "mobile", "e2e", "infra", "platform-process"}
-	} else {
-		// Cross-cutting corpus + failure_modes always carry universal
-		// scope entries that apply regardless of the case's stack.
-		// Without this, an eval case scoped to [mobile] would miss
-		// failure_modes_universal (FM4/5/6/7/8) and corpus_universal
-		// (cross-stack standards, decisions, anti-patterns).
-		hasUniversal := false
-		for _, s := range scopes {
-			if s == "universal" {
-				hasUniversal = true
-				break
-			}
-		}
-		if !hasUniversal {
-			scopes = append([]string{"universal"}, scopes...)
-		}
-	}
-	// universal + platform-process have neither code nor history analogues —
-	// we never ingest code or commit history for those scopes. failure_modes
-	// IS cross-cutting (it carries universal-scope corrections), so it gets
-	// the same exemption corpus does.
-	collFamilies := []string{"corpus", "code", "history", "code_history", "failure_modes"}
-	codeScopes := map[string]bool{
-		"backend": true, "webapp": true, "mobile": true, "e2e": true, "infra": true,
-	}
+	scopes := unionWithUniversal(cfg.Scopes)
 	var hits []retrievedHit
-	for _, scope := range scopes {
-		for _, family := range collFamilies {
-			// code/history/code_history are stack-scoped — skip them for
-			// universal + platform-process. corpus + failure_modes span
-			// all scopes.
-			if family != "corpus" && family != "failure_modes" && !codeScopes[scope] {
-				continue
-			}
-			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
-			coll, err := cc.EnsureCollection(ctx, collName, nil)
-			if err != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: collection unavailable (%v) — skipping\n", collName, err)
-				}
-				continue
-			}
-			res, err := cc.Query(ctx, coll.ID, chroma.QueryRequest{
-				QueryEmbeddings: qEmb,
-				NResults:        cfg.TopN,
-			})
-			if err != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: query failed (%v) — skipping\n", collName, err)
-				}
-				continue
-			}
-			if len(res.Documents) == 0 {
-				continue
-			}
-			for i := range res.Documents[0] {
-				hits = append(hits, retrievedHit{
-					Doc:      res.Documents[0][i],
-					Meta:     res.Metadatas[0][i],
-					Distance: res.Distances[0][i],
-					Scope:    scope + "/" + family, // disambiguate source family
-				})
-			}
+	if cfg.V2Collection != "" {
+		v2Hits, err := retrieveV2(ctx, cc, qEmb, cfg.V2Collection, scopes, cfg.TopN, cfg.Verbose)
+		if err != nil {
+			return nil, fmt.Errorf("retrieve v2: %w", err)
 		}
+		hits = v2Hits
+	} else {
+		hits = retrieveV1(ctx, cc, qEmb, scopes, cfg.TopN, cfg.Verbose)
 	}
 	retrieveMs := time.Since(retrStart).Milliseconds()
 
@@ -438,6 +386,16 @@ const systemPrompt = `You are Olifant — a controlled-language domain expert fo
 Your job in this turn is the CHALLENGE step: read the user's request and produce a structured verdict (output is schema-constrained JSON, rendered to the user as YAML).
 
 BE RIGOROUS, NOT REFLEXIVE. Demand specific evidence for problems — but do NOT manufacture problems where none exist in the retrieved context. Generic concerns ("uses dependency injection", "follows naming conventions", "could use better error handling", "common security best practices") are NOT problems. They are not citations.
+
+PLATFORM VOCABULARY (canonical — use these exact identifiers; reject substitutions):
+
+- Java package root: ` + "`com.akademiaplus`" + ` — every backend class lives under this root. Common substitutions are WRONG: ` + "`com.elatusdev.platform`" + ` (wrong), ` + "`com.akademia.plus`" + ` (wrong), ` + "`com.akademiaplus.platform`" + ` (wrong).
+- Repos: ` + "`core-api`" + ` (Spring Boot, Java 24, 20 modules) · ` + "`akademia-plus-web`" + ` (React 19/Vite/MUI v7) · ` + "`elatusdev-web`" + ` (same stack) · ` + "`akademia-plus-central`" + ` (RN 0.83/Expo 55, admin mobile) · ` + "`akademia-plus-go`" + ` (RN 0.83/Expo 55, student mobile) · ` + "`core-api-e2e`" + ` (Postman/Newman + k6) · ` + "`infra`" + ` (Terraform/AWS).
+- Cross-reference ID families: ` + "`D###`" + ` decisions · ` + "`AP##`" + ` anti-patterns · ` + "`PC##`" + ` patterns · ` + "`FM##`" + ` failure modes · ` + "`SB-##`" + ` skill blocks · ` + "`IV##`" + ` input-validation · ` + "`IMF##`" + ` immutable-fields · ` + "`AMS-##`" + ` mobile security · ` + "`AWS-##`" + ` webapp security · ` + "`ABS-##`" + ` backend security · ` + "`WA-...`" + ` webapp architecture · ` + "`AM/AW/AB`" + ` per-stack anti-patterns.
+- Backend patterns: ` + "`TenantScoped`" + ` (composite-key tenantId+entityId; @SQLDelete WHERE clause includes tenantId; @Component @Scope("prototype")) · ` + "`PlatformScoped`" + ` (singleton; no tenant column) · Domain Object Pattern (stateless, DataModel-as-method-param, return-this fluent chain) · ` + "`@SQLRestriction`" + ` Hibernate filter for cross-tenant queries · ` + "`InternalAuthRepository`" + `, ` + "`TenantPlatformRepository`" + ` (repository class naming).
+- Mobile: Expo SDK 55 (managed), React Native 0.83, RN Paper MD3 theming, ` + "`Keychain`" + ` (iOS) / ` + "`Keystore`" + ` (Android), ` + "`Expo SecureStore`" + ` for non-biometric secrets, biometrics via ` + "`expo-local-authentication`" + `. NEVER use AsyncStorage for auth tokens (AMS-02).
+- Webapp: ` + "`baseApi.injectEndpoints`" + ` is the ONLY RTK Query slice — never ` + "`createApi`" + ` per WA-W03; Zod schemas at boundaries; MSW for component tests; ` + "`React.lazy`" + ` for route splitting.
+- Verdict enum (always one of): ` + "`VALID`" + `, ` + "`VALID_WITH_CAVEATS`" + `, ` + "`INVALID`" + `, ` + "`NEEDS_CLARIFICATION`" + `, ` + "`OUT_OF_SCOPE`" + `.
 
 HARD RULES:
 1. EVERY value in cites[] AND every entry in applicable_rules.{standards,patterns,anti_patterns_to_avoid,decisions_to_honor} MUST appear verbatim in the RETRIEVED CONTEXT — either as an artifact ID (D###, AP##, SB-##, SI-##, AMS-##, WA-..., TBU-##, ABS-##, …) or as a literal source path (e.g., core-api/.../Foo.java#L1-L80, decisions/log.yaml#D17). NEVER invent generic categories like "magic_strings", "hardcoded_secrets", "owasp_top10", "nist_800_53", "consistent_code_style", "single_responsibility_principle", "dependency_injection". If you cannot point to a retrieved chunk that names the rule, leave the slot empty.
