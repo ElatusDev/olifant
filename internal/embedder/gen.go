@@ -132,6 +132,7 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
 
+dispatch:
 	for i, tr := range work {
 		if existing[tr.AnchorID] {
 			st.Skipped++
@@ -139,7 +140,7 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 		}
 		select {
 		case <-ctx.Done():
-			break
+			break dispatch
 		default:
 		}
 
