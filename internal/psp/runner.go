@@ -63,9 +63,9 @@ func executorKinds(m map[string]Executor) []string {
 
 // RunResult is what cmd/run.go surfaces after Run completes.
 type RunResult struct {
-	State        State
-	Steps        []StepResult
-	Aggregate    *Aggregate
+	State         State
+	Steps         []StepResult
+	Aggregate     *Aggregate
 	AggregatePath string
 }
 
@@ -190,9 +190,9 @@ func runStep(
 	}
 
 	result := StepResult{
-		Seq:        seq,
-		StepID:     step.ID,
-		StartedAt:  time.Now(),
+		Seq:       seq,
+		StepID:    step.ID,
+		StartedAt: time.Now(),
 	}
 
 	var lastViolations []ValidationViolation

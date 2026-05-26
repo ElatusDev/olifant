@@ -37,16 +37,16 @@ func capInput(s string, maxChars int) string {
 
 // IndexConfig drives the corpus→ChromaDB upload pipeline.
 type IndexConfig struct {
-	CorpusDir   string // <kb-root>/corpus/v1
-	OllamaURL   string
-	ChromaURL   string
-	Embedder    string // model name, e.g., nomic-embed-text
-	Tenant      string
-	Database    string
-	BatchSize   int  // chunks per embed/upsert call (defaults to 32)
-	Verbose     bool
-	DryRun      bool // skip embedding + upserting; only walk + report
-	OnlyScopes  []string
+	CorpusDir  string // <kb-root>/corpus/v1
+	OllamaURL  string
+	ChromaURL  string
+	Embedder   string // model name, e.g., nomic-embed-text
+	Tenant     string
+	Database   string
+	BatchSize  int // chunks per embed/upsert call (defaults to 32)
+	Verbose    bool
+	DryRun     bool // skip embedding + upserting; only walk + report
+	OnlyScopes []string
 }
 
 // IndexStats summarizes one run.
@@ -108,9 +108,9 @@ func Index(ctx context.Context, cfg IndexConfig) (IndexStats, error) {
 
 		collName := "corpus_" + strings.ReplaceAll(scope, "-", "_")
 		coll, err := cc.EnsureCollection(ctx, collName, map[string]interface{}{
-			"hnsw:space":   "cosine",
+			"hnsw:space":    "cosine",
 			"olifant_scope": scope,
-			"created_at":   time.Now().UTC().Format(time.RFC3339),
+			"created_at":    time.Now().UTC().Format(time.RFC3339),
 		})
 		if err != nil {
 			return stats, fmt.Errorf("EnsureCollection %s: %w", collName, err)

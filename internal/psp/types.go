@@ -147,19 +147,19 @@ type ValidationViolation struct {
 
 // Aggregate is the per-plan summary written to short-term/plans/<plan_id>/aggregate.yaml.
 type Aggregate struct {
-	PlanID                string        `yaml:"plan_id"`
-	SessionID             string        `yaml:"session_id,omitempty"`
-	Goal                  string        `yaml:"goal"`
-	State                 State         `yaml:"state"`
-	TotalSteps            int           `yaml:"total_steps"`
-	TotalAttempts         int           `yaml:"total_attempts"`
-	TotalElapsedMs        int64         `yaml:"total_elapsed_ms"`
-	TotalEvalTokens       int           `yaml:"total_eval_tokens"`
-	PeakContextTokens     int           `yaml:"peak_context_tokens"`
-	FirstTryPassRate      float64       `yaml:"first_try_pass_rate"`
-	Verdict               string        `yaml:"verdict"` // success | partial | failure
-	StepSummaries         []StepSummary `yaml:"step_summaries"`
-	FinalOutputsByStepID  map[string]StepOutput `yaml:"final_outputs_by_step_id,omitempty"`
+	PlanID               string                `yaml:"plan_id"`
+	SessionID            string                `yaml:"session_id,omitempty"`
+	Goal                 string                `yaml:"goal"`
+	State                State                 `yaml:"state"`
+	TotalSteps           int                   `yaml:"total_steps"`
+	TotalAttempts        int                   `yaml:"total_attempts"`
+	TotalElapsedMs       int64                 `yaml:"total_elapsed_ms"`
+	TotalEvalTokens      int                   `yaml:"total_eval_tokens"`
+	PeakContextTokens    int                   `yaml:"peak_context_tokens"`
+	FirstTryPassRate     float64               `yaml:"first_try_pass_rate"`
+	Verdict              string                `yaml:"verdict"` // success | partial | failure
+	StepSummaries        []StepSummary         `yaml:"step_summaries"`
+	FinalOutputsByStepID map[string]StepOutput `yaml:"final_outputs_by_step_id,omitempty"`
 }
 
 // StepSummary is one row in Aggregate.StepSummaries.

@@ -26,20 +26,20 @@ const embedRequestMaxChars = 2000
 
 // Config drives one challenge run.
 type Config struct {
-	Request          string
-	OllamaURL        string
-	ChromaURL        string
-	Embedder         string
-	Synthesizer      string
-	Tenant           string
-	Database         string
-	Scopes           []string // collections to query; empty = all
-	TopN             int      // chunks per scope (default 8)
-	Temperature      float64  // 0.1 default; 0 = deterministic
-	MaxTokens        int      // synthesizer num_predict (default 4096 — aligned with validate/runner.go after the 1024-regress fix; multi-claim outputs with cites and evidence overflow 1024)
-	Verbose          bool
-	Validator        *CiteValidator // optional; nil disables cite validation
-	MaxValidateRetries int          // default 1 retry on cite hallucination
+	Request            string
+	OllamaURL          string
+	ChromaURL          string
+	Embedder           string
+	Synthesizer        string
+	Tenant             string
+	Database           string
+	Scopes             []string // collections to query; empty = all
+	TopN               int      // chunks per scope (default 8)
+	Temperature        float64  // 0.1 default; 0 = deterministic
+	MaxTokens          int      // synthesizer num_predict (default 4096 — aligned with validate/runner.go after the 1024-regress fix; multi-claim outputs with cites and evidence overflow 1024)
+	Verbose            bool
+	Validator          *CiteValidator // optional; nil disables cite validation
+	MaxValidateRetries int            // default 1 retry on cite hallucination
 
 	// V2 RAG-pivot retrieval — when V2Collection != "", retrieval queries
 	// a single olifant-v2-curriculum-style Chroma collection (tag-indexed)
@@ -57,7 +57,7 @@ type Result struct {
 	RetrievedSources        []string // top-N source paths fed to the synthesizer
 	RawJSON                 string   // the model's literal JSON output
 	YAMLOutput              string
-	JSONValid               bool     // true if the synth output parsed as JSON
+	JSONValid               bool // true if the synth output parsed as JSON
 	Elapsed                 time.Duration
 	EmbedMs                 int64
 	RetrieveMs              int64

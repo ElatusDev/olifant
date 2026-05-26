@@ -8,13 +8,13 @@ import (
 
 func TestStripSectionNumberPrefix(t *testing.T) {
 	cases := map[string]string{
-		"1. Execution Summary":        "Execution Summary",
-		"3.1 Failure Register":        "Failure Register",
-		"7.1 Actions":                 "Actions",
-		"Improvement Actions":         "Improvement Actions",
-		"9to5 Working Hours":          "9to5 Working Hours",
-		"  10. Lessons":               "Lessons",
-		"":                            "",
+		"1. Execution Summary": "Execution Summary",
+		"3.1 Failure Register": "Failure Register",
+		"7.1 Actions":          "Actions",
+		"Improvement Actions":  "Improvement Actions",
+		"9to5 Working Hours":   "9to5 Working Hours",
+		"  10. Lessons":        "Lessons",
+		"":                     "",
 	}
 	for in, want := range cases {
 		if got := stripSectionNumberPrefix(in); got != want {

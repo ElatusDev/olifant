@@ -127,16 +127,16 @@ func BuildFileSnapshot(rec *CommitRecord, snap FileSnapshot) JSONLExample {
 	}
 
 	meta := map[string]string{
-		"sha":              rec.SHA,
-		"parent_sha":       rec.ParentSHA,
-		"author":           rec.Author,
-		"committed_at":     rec.CommittedAt.Format("2006-01-02T15:04:05Z"),
-		"path":             snap.Path,
-		"status":           snap.Status,
-		"content_size":     intToStr(snap.ContentSize),
+		"sha":               rec.SHA,
+		"parent_sha":        rec.ParentSHA,
+		"author":            rec.Author,
+		"committed_at":      rec.CommittedAt.Format("2006-01-02T15:04:05Z"),
+		"path":              snap.Path,
+		"status":            snap.Status,
+		"content_size":      intToStr(snap.ContentSize),
 		"content_truncated": boolStr(snap.ContentTruncated),
-		"diff_size":        intToStr(snap.DiffSize),
-		"diff_truncated":   boolStr(snap.DiffTruncated),
+		"diff_size":         intToStr(snap.DiffSize),
+		"diff_truncated":    boolStr(snap.DiffTruncated),
 	}
 	if snap.OldPath != "" {
 		meta["old_path"] = snap.OldPath

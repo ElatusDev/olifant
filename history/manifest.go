@@ -26,10 +26,10 @@ type Manifest struct {
 // delta (commits/snapshots emitted in the most recent run). Cumulative
 // totals are deliberately NOT tracked — `git log` is authoritative.
 type RepoManifest struct {
-	Name            string  `yaml:"name"`
-	Scope           string  `yaml:"scope"`
-	LastSHA         string  `yaml:"last_sha"`
-	LastCommittedAt string  `yaml:"last_committed_at"`
+	Name            string   `yaml:"name"`
+	Scope           string   `yaml:"scope"`
+	LastSHA         string   `yaml:"last_sha"`
+	LastCommittedAt string   `yaml:"last_committed_at"`
 	LastRun         RunDelta `yaml:"last_run"`
 }
 

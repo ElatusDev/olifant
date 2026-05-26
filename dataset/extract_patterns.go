@@ -12,11 +12,11 @@ import (
 // scope to emit. testing is cross-cutting → universal;
 // prompt-engineering is meta → platform-process.
 var patternScopeByBasename = map[string]string{
-	"backend":           "backend",
-	"frontend":          "webapp",
-	"mobile":            "mobile",
-	"testing":           "universal",
-	"infrastructure":    "infra",
+	"backend":            "backend",
+	"frontend":           "webapp",
+	"mobile":             "mobile",
+	"testing":            "universal",
+	"infrastructure":     "infra",
 	"prompt-engineering": "platform-process",
 }
 
@@ -124,10 +124,10 @@ func splitOnPrefix(path, prefix string) ([]h2Section, error) {
 	defer f.Close()
 
 	var (
-		secs       []h2Section
-		cur        *h2Section
-		inFence    bool
-		body       strings.Builder
+		secs    []h2Section
+		cur     *h2Section
+		inFence bool
+		body    strings.Builder
 	)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024) // patterns/*.md can have long code blocks

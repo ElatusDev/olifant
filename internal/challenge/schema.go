@@ -9,10 +9,11 @@ import "regexp"
 // generic-category hallucination at the SCHEMA level (not just retry).
 //
 // Slot → source:
-//   applicable_rules.patterns               → concept names for the scope
-//   applicable_rules.standards              → dictionary terms matching ^<UPPER>-\d+$ (SB-04, WA-L, TBU-05, …)
-//   applicable_rules.anti_patterns_to_avoid → dictionary terms matching ^AP\d+$ or ^<UPPER>+-\d+$ (AP3, ABS-01, AMS-02, …)
-//   applicable_rules.decisions_to_honor     → dictionary terms matching ^D\d+$
+//
+//	applicable_rules.patterns               → concept names for the scope
+//	applicable_rules.standards              → dictionary terms matching ^<UPPER>-\d+$ (SB-04, WA-L, TBU-05, …)
+//	applicable_rules.anti_patterns_to_avoid → dictionary terms matching ^AP\d+$ or ^<UPPER>+-\d+$ (AP3, ABS-01, AMS-02, …)
+//	applicable_rules.decisions_to_honor     → dictionary terms matching ^D\d+$
 //
 // When validator is nil, returns the static challengeJSONSchema unchanged.
 func BuildChallengeSchema(v *CiteValidator, requestScopes []string) map[string]interface{} {
@@ -145,11 +146,12 @@ var (
 // model can't pair INVALID with proceed_directly, etc.
 //
 // Coupling rules:
-//   VALID                 → proceed_directly
-//   VALID_WITH_CAVEATS    → confirm_with_user
-//   INVALID               → abort
-//   NEEDS_CLARIFICATION   → confirm_with_user
-//   OUT_OF_SCOPE          → abort
+//
+//	VALID                 → proceed_directly
+//	VALID_WITH_CAVEATS    → confirm_with_user
+//	INVALID               → abort
+//	NEEDS_CLARIFICATION   → confirm_with_user
+//	OUT_OF_SCOPE          → abort
 var challengeJSONSchema = map[string]interface{}{
 	"type":                 "object",
 	"required":             []string{"challenge"},

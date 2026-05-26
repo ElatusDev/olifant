@@ -110,9 +110,9 @@ func buildRetroExample(project, scope, retroStem string, sec h2Section) Example 
 	)
 
 	meta := map[string]string{
-		"project":     project,
-		"retro":       retroStem,
-		"section":     sec.Title,
+		"project": project,
+		"retro":   retroStem,
+		"section": sec.Title,
 	}
 
 	return Example{

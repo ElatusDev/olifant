@@ -223,10 +223,10 @@ func buildTripleExample(kbRoot string, k tripleKey, scope string, paths *stemPat
 		Role:   "prompt_build",
 		Family: "lifecycle-triple",
 		Metadata: map[string]string{
-			"project":      k.Project,
-			"stem":         k.Stem,
-			"workflow":     paths.Workflow,
-			"prompt":       paths.Prompt,
+			"project":       k.Project,
+			"stem":          k.Stem,
+			"workflow":      paths.Workflow,
+			"prompt":        paths.Prompt,
 			"retrospective": paths.Retro,
 		},
 	}, nil
@@ -247,9 +247,9 @@ func digestArtifact(path string) (artifactDigest, error) {
 	}
 	lines := strings.Split(string(data), "\n")
 	var (
-		title    string
-		excerpt  strings.Builder
-		inFence  bool
+		title   string
+		excerpt strings.Builder
+		inFence bool
 	)
 	for _, ln := range lines {
 		trimmed := strings.TrimSpace(ln)

@@ -128,10 +128,10 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 		cancel()
 
 		result := CaseResult{
-			CaseID:         c.ID,
-			Scope:          c.Scope,
-			File:           c.File,
-			ElapsedMs:      time.Since(caseStart).Milliseconds(),
+			CaseID:    c.ID,
+			Scope:     c.Scope,
+			File:      c.File,
+			ElapsedMs: time.Since(caseStart).Milliseconds(),
 		}
 
 		if runErr != nil {
@@ -310,17 +310,17 @@ func languageHintForPath(path string) string {
 
 func writeCaseMeta(caseDir string, c Case, res *challenge.Result) {
 	meta := map[string]interface{}{
-		"case_id":          c.ID,
-		"scope":            c.Scope,
-		"file":             c.File,
-		"elapsed_ms":       res.Elapsed.Milliseconds(),
-		"embed_ms":         res.EmbedMs,
-		"retrieve_ms":      res.RetrieveMs,
-		"synth_ms":         res.SynthMs,
-		"eval_tokens":      res.SynthEvalCount,
-		"tokens_per_sec":   res.SynthTokensSec,
-		"retrieved_count":  res.RetrievedCount,
-		"cite_attempts":    res.CiteAttempts,
+		"case_id":              c.ID,
+		"scope":                c.Scope,
+		"file":                 c.File,
+		"elapsed_ms":           res.Elapsed.Milliseconds(),
+		"embed_ms":             res.EmbedMs,
+		"retrieve_ms":          res.RetrieveMs,
+		"synth_ms":             res.SynthMs,
+		"eval_tokens":          res.SynthEvalCount,
+		"tokens_per_sec":       res.SynthTokensSec,
+		"retrieved_count":      res.RetrievedCount,
+		"cite_attempts":        res.CiteAttempts,
 		"remaining_violations": res.RemainingCiteViolations,
 	}
 	body, _ := yaml.Marshal(meta)

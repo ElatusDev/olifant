@@ -51,10 +51,10 @@ type Violation struct {
 type Layer string
 
 const (
-	LayerDictionary  Layer = "dictionary"  // dictionary/<scope>/<file>.yaml — artifact IDs (D###, AP##, SB-##, …)
-	LayerConcept     Layer = "concept"     // concepts/concepts.yaml
-	LayerConstraint  Layer = "constraint"  // constraints/constraints.yaml
-	LayerGlossary    Layer = "glossary"    // glossary/glossary.yaml
+	LayerDictionary Layer = "dictionary" // dictionary/<scope>/<file>.yaml — artifact IDs (D###, AP##, SB-##, …)
+	LayerConcept    Layer = "concept"    // concepts/concepts.yaml
+	LayerConstraint Layer = "constraint" // constraints/constraints.yaml
+	LayerGlossary   Layer = "glossary"   // glossary/glossary.yaml
 )
 
 // CiteValidator holds the corpus of legal terms (across all layers and
@@ -232,10 +232,10 @@ func (v *CiteValidator) TermsForScopes(layer Layer, requestScopes []string) []st
 // challengeShape is the minimal parse target for validation.
 type challengeShape struct {
 	Challenge struct {
-		Request     string `json:"request"`
-		Verdict     string `json:"verdict"`
-		Proceed     string `json:"proceed"`
-		Confirms    []struct {
+		Request  string `json:"request"`
+		Verdict  string `json:"verdict"`
+		Proceed  string `json:"proceed"`
+		Confirms []struct {
 			Claim string   `json:"claim"`
 			Cites []string `json:"cites"`
 		} `json:"confirms"`
@@ -268,15 +268,15 @@ var verdictProceedExpected = map[string]string{
 
 // placeholderRequests are non-substantive values the model sometimes drops in.
 var placeholderRequests = map[string]struct{}{
-	"clarification":         {},
-	"clarification_required": {},
+	"clarification":              {},
+	"clarification_required":     {},
 	"clarification_not_required": {},
-	"no_changes_required":   {},
-	"request_clarification": {},
-	"none_required":         {},
-	"none":                  {},
-	"n/a":                   {},
-	"na":                    {},
+	"no_changes_required":        {},
+	"request_clarification":      {},
+	"none_required":              {},
+	"none":                       {},
+	"n/a":                        {},
+	"na":                         {},
 }
 
 // Validate parses the synth output and returns ALL violations across the rule

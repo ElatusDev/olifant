@@ -108,7 +108,9 @@ func extractKBYAML(absPath, relPath string, cfg ScanConfig) ([]Symbol, error) {
 var reKBHeader = regexp.MustCompile(`^(#{2,4})\s+(.+?)\s*$`)
 
 // reKBIDPrefix matches a leading ID at the start of header text:
-//   "D17: ...", "AP3 — ...", "PC1", "AB-04 ..."
+//
+//	"D17: ...", "AP3 — ...", "PC1", "AB-04 ..."
+//
 // Captures prefix (letters, optional hyphen) + numeric part.
 var reKBIDPrefix = regexp.MustCompile(`^([A-Z]{1,4})-?(\d+)\b`)
 

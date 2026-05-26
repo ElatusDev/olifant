@@ -353,8 +353,9 @@ func sourcesToStrings(xs []dataset.SourceKind) []string {
 // datasetFormatPairs runs the RAG-pivot Phase C1 verdict-YAML pair pipeline.
 // 2 stages, both via `claude --print --model opus` subprocess per
 // feedback_olifant_uses_claude_code_only.md + _opus_latest.md:
-//   stage 1 (paraphrase): archetype seed → N paraphrastic variants
-//   stage 2 (synth):      each variant → 1 verdict-YAML doc
+//
+//	stage 1 (paraphrase): archetype seed → N paraphrastic variants
+//	stage 2 (synth):      each variant → 1 verdict-YAML doc
 //
 // Output: append-only JSONL at --out (default
 // ~/.olifant/training/format-v1/pairs.jsonl). Resumable: on --resume,

@@ -8,12 +8,12 @@ import (
 
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
-		"Domain Object Pattern":          "domain-object-pattern",
-		"  Trim & punct! ":               "trim-punct",
-		"Already-Hyphenated_Title":       "already-hyphenated-title",
-		"":                               "",
-		"###":                            "",
-		"A   B":                          "a-b",
+		"Domain Object Pattern":    "domain-object-pattern",
+		"  Trim & punct! ":         "trim-punct",
+		"Already-Hyphenated_Title": "already-hyphenated-title",
+		"":                         "",
+		"###":                      "",
+		"A   B":                    "a-b",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {
@@ -32,9 +32,9 @@ intro paragraph that should be dropped (no H2 yet).
 
 Body of the first pattern.
 
-` + "```java" + `
+`+"```java"+`
 ## not-a-header (inside fence)
-` + "```" + `
+`+"```"+`
 
 Still part of the Domain Object Pattern body.
 

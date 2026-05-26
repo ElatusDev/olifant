@@ -89,7 +89,7 @@ func (c *Client) Embed(ctx context.Context, model string, inputs []string) ([][]
 //   - nil / omitted   — free-form output
 //   - "json"          — model must emit any valid JSON
 //   - map[string]any  — a JSON Schema; model is constrained to emit conformant
-//                       output via grammar-restricted decoding (Ollama ≥ 0.5).
+//     output via grammar-restricted decoding (Ollama ≥ 0.5).
 type GenerateRequest struct {
 	Model   string                 `json:"model"`
 	Prompt  string                 `json:"prompt"`
