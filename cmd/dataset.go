@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/dataset"
+	"github.com/ElatusDev/olifant/internal/embedder"
 	"github.com/ElatusDev/olifant/internal/format"
 )
 
@@ -21,7 +22,7 @@ import (
 // Phase C1 verdict-YAML training-pair pipeline (format-pairs).
 func Dataset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index|pack|sanitize-docs|format-pairs)")
+		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index|pack|sanitize-docs|format-pairs|embedder-triples)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -38,6 +39,8 @@ func Dataset(args []string) int {
 		return datasetSanitizeDocs(rest)
 	case "format-pairs":
 		return datasetFormatPairs(rest)
+	case "embedder-triples":
+		return datasetEmbedderTriples(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant dataset: unknown action %q\n", action)
 		return 2
@@ -439,5 +442,119 @@ func datasetFormatPairs(args []string) int {
 		stats.VariantsAttempted, stats.VariantsAccepted, stats.VariantsRejected)
 	fmt.Printf("  stage 2 elapsed:      %s\n", stats.StageTwoElapsed.Round(time.Second))
 	fmt.Printf("  total elapsed:        %s\n", stats.TotalElapsed.Round(time.Second))
+	return 0
+}
+
+// datasetEmbedderTriples runs the RAG-pivot Phase B1a pipeline: load the
+// Day-5 v2-curriculum prose corpus, corpus-mine one hard negative per anchor
+// (same-scope+different-role, cosine-similar over bag-of-tags), and call
+// Opus for one paraphrastic positive per anchor. Writes append-only JSONL.
+//
+// Reference: knowledge-base/architecture/olifant-rag-phase-b-prompt.md §4 B1a.
+// HARD RULE: all LLM calls route through `claude --print --model opus`.
+func datasetEmbedderTriples(args []string) int {
+	fs := flag.NewFlagSet("dataset embedder-triples", flag.ExitOnError)
+	proseDir := fs.String("prose-dir", "", "v2-curriculum prose dir (default: <kb-root>/corpus/v2-curriculum/prose)")
+	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect via cwd ancestors)")
+	out := fs.String("out", "", "JSONL output path (default: ~/.olifant/training/embedder-v1/triples.jsonl)")
+	model := fs.String("model", "opus", "claude model (must remain opus per HARD RULE)")
+	bin := fs.String("claude-bin", "claude", "claude CLI binary")
+	limit := fs.Int("limit", 0, "process only first N anchors (0 = all; 1000 for §4 B1a sanity gate)")
+	conc := fs.Int("concurrency", 1, "parallel paraphrase calls (workflow default 1)")
+	resume := fs.Bool("resume", true, "skip anchors already on disk by anchor_id")
+	verbose := fs.Bool("v", false, "verbose per-anchor progress")
+	timeoutSec := fs.Int("per-call-timeout", 60, "per-claude-call timeout seconds")
+	overallTimeout := fs.Int("timeout", 0, "overall timeout in seconds (default 0 = none)")
+	miningOnly := fs.Bool("mining-only", false, "load + mine + print stats; skip Opus call (sanity scaffold)")
+	_ = fs.Parse(args)
+
+	root := *kbRoot
+	if root == "" {
+		if found, ok := findUp("knowledge-base/README.md"); ok {
+			root = filepath.Dir(found)
+		}
+	}
+	prose := *proseDir
+	if prose == "" {
+		if root == "" {
+			fmt.Fprintln(os.Stderr, "dataset embedder-triples: --prose-dir or --kb-root required")
+			return 1
+		}
+		prose = filepath.Join(root, "corpus", "v2-curriculum", "prose")
+	}
+
+	t0 := time.Now()
+	sentences, err := embedder.LoadProse(prose)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load prose:", err)
+		return 1
+	}
+	fmt.Printf("loaded %d sentences from %s in %s\n",
+		len(sentences), prose, time.Since(t0).Round(time.Millisecond))
+
+	t1 := time.Now()
+	triples := embedder.Mine(sentences)
+	mineElapsed := time.Since(t1)
+	miningSt := embedder.Summarise(sentences, triples)
+	fmt.Printf("mined %d triples (%s):\n", len(triples), mineElapsed.Round(time.Millisecond))
+	fmt.Print(miningSt.HumanString())
+
+	if *miningOnly {
+		fmt.Println("(--mining-only: skipping Opus paraphrase pass)")
+		return 0
+	}
+
+	ctx := context.Background()
+	if *overallTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*overallTimeout)*time.Second)
+		defer cancel()
+	}
+
+	fmt.Println("embedder-triples config:")
+	fmt.Printf("  limit:            %d (0 = all)\n", *limit)
+	fmt.Printf("  concurrency:      %d\n", *conc)
+	fmt.Printf("  per-call timeout: %ds\n", *timeoutSec)
+	fmt.Printf("  resume:           %v\n", *resume)
+	fmt.Printf("  model:            %s\n", *model)
+	if *out != "" {
+		fmt.Printf("  out:              %s\n", *out)
+	}
+
+	stats, err := embedder.Generate(ctx, embedder.GenConfig{
+		Triples:        triples,
+		OutPath:        *out,
+		ClaudeBin:      *bin,
+		Model:          *model,
+		Resume:         *resume,
+		Limit:          *limit,
+		Concurrency:    *conc,
+		MaxRetries:     1,
+		PerCallTimeout: time.Duration(*timeoutSec) * time.Second,
+		Verbose:        *verbose,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "generate:", err)
+		return 1
+	}
+
+	fmt.Println()
+	fmt.Println("embedder-triples summary:")
+	fmt.Printf("  anchors in queue:     %d\n", stats.Anchors)
+	fmt.Printf("  processed:            %d\n", stats.Processed)
+	fmt.Printf("  succeeded:            %d (retried-once: %d)\n", stats.Succeeded, stats.RetriedOnce)
+	fmt.Printf("  failed:               %d\n", stats.Failed)
+	fmt.Printf("  resume-skipped:       %d\n", stats.Skipped)
+	if stats.Processed > 0 {
+		parseRate := float64(stats.Succeeded) / float64(stats.Processed) * 100
+		fmt.Printf("  parse-success rate:   %.1f%% (workflow B1a sanity gate: ≥95%%)\n", parseRate)
+	}
+	fmt.Printf("  mean para/anchor len: %.2f\n", stats.MeanRatio)
+	if stats.ArtifactIDTotal > 0 {
+		idRate := float64(stats.ArtifactIDHits) / float64(stats.ArtifactIDTotal) * 100
+		fmt.Printf("  artifact-ID retained: %d / %d (%.0f%% of anchors that had any)\n",
+			stats.ArtifactIDHits, stats.ArtifactIDTotal, idRate)
+	}
+	fmt.Printf("  elapsed:              %s\n", stats.Elapsed.Round(time.Second))
 	return 0
 }
