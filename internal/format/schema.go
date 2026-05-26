@@ -18,24 +18,25 @@ import (
 
 // Verdict enum — matches challenge.systemPrompt's allowed values.
 const (
-	VerdictValid             = "VALID"
-	VerdictValidWithCaveats  = "VALID_WITH_CAVEATS"
-	VerdictInvalid           = "INVALID"
+	VerdictValid              = "VALID"
+	VerdictValidWithCaveats   = "VALID_WITH_CAVEATS"
+	VerdictInvalid            = "INVALID"
 	VerdictNeedsClarification = "NEEDS_CLARIFICATION"
-	VerdictOutOfScope        = "OUT_OF_SCOPE"
+	VerdictOutOfScope         = "OUT_OF_SCOPE"
 )
 
 // Proceed enum — derived from verdict per the documented mapping in
 // challenge.systemPrompt:
-//   VALID                → proceed_directly
-//   VALID_WITH_CAVEATS   → confirm_with_user
-//   INVALID              → abort
-//   NEEDS_CLARIFICATION  → confirm_with_user
-//   OUT_OF_SCOPE         → abort
+//
+//	VALID                → proceed_directly
+//	VALID_WITH_CAVEATS   → confirm_with_user
+//	INVALID              → abort
+//	NEEDS_CLARIFICATION  → confirm_with_user
+//	OUT_OF_SCOPE         → abort
 const (
-	ProceedDirectly       = "proceed_directly"
+	ProceedDirectly        = "proceed_directly"
 	ProceedConfirmWithUser = "confirm_with_user"
-	ProceedAbort          = "abort"
+	ProceedAbort           = "abort"
 )
 
 // VerdictDoc is the parsed form of one verdict-YAML training response.
@@ -79,10 +80,10 @@ type Clarification struct {
 
 // ApplicableRules is the four-bucket pointers structure.
 type ApplicableRules struct {
-	Standards            []string `yaml:"standards"`
-	Patterns             []string `yaml:"patterns"`
-	AntiPatternsToAvoid  []string `yaml:"anti_patterns_to_avoid"`
-	DecisionsToHonor     []string `yaml:"decisions_to_honor"`
+	Standards           []string `yaml:"standards"`
+	Patterns            []string `yaml:"patterns"`
+	AntiPatternsToAvoid []string `yaml:"anti_patterns_to_avoid"`
+	DecisionsToHonor    []string `yaml:"decisions_to_honor"`
 }
 
 // ParseVerdictYAML parses raw YAML bytes into a VerdictDoc. It does

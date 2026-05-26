@@ -48,8 +48,8 @@ func Bootstrap(cfg BootstrapConfig) (BootstrapStats, error) {
 	}
 
 	type proposed struct {
-		entry  Entry
-		scope  string
+		entry Entry
+		scope string
 	}
 	seen := map[string]proposed{}
 

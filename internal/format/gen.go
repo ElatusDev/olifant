@@ -28,16 +28,16 @@ type GenConfig struct {
 	Concurrency     int            // parallel verdict-YAML calls; default 1
 	MaxRetries      int            // per-call retry on parse/validation fail; default 1
 	Verbose         bool
-	PerCallTimeout  time.Duration  // default 90s
+	PerCallTimeout  time.Duration // default 90s
 }
 
 // Pair is one (prompt, verdict-YAML) training row. Persists as one JSON
 // object per line in the JSONL output file.
 type Pair struct {
 	Prompt      string `json:"prompt"`
-	Response    string `json:"response"`   // verdict-YAML literal
+	Response    string `json:"response"` // verdict-YAML literal
 	Archetype   string `json:"archetype"`
-	Verdict     string `json:"verdict"`     // for forensics
+	Verdict     string `json:"verdict"` // for forensics
 	GeneratedAt string `json:"generated_at"`
 }
 

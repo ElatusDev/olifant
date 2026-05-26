@@ -78,7 +78,7 @@ type JSONLExample struct {
 
 // ChatMessage is one turn in a ShareGPT example.
 type ChatMessage struct {
-	Role    string `json:"role"`    // "user" | "assistant"
+	Role    string `json:"role"` // "user" | "assistant"
 	Content string `json:"content"`
 }
 
@@ -105,7 +105,7 @@ type ScanStats struct {
 	CommitsEmitted     int
 	CommitsSkipped     int
 	SnapshotsEmitted   int
-	SnapshotsTruncated int // count of file snapshots whose content was truncated
+	SnapshotsTruncated int            // count of file snapshots whose content was truncated
 	PerRepo            map[string]int // repo → emitted commit count
 	PerScope           map[string]int // scope → emitted commit count
 	Elapsed            time.Duration

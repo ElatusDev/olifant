@@ -16,13 +16,13 @@ type antipatternsYAML struct {
 }
 
 type antipatternEntry struct {
-	ID            string `yaml:"id"`
-	Name          string `yaml:"name"`
-	Context       string `yaml:"context"`
-	WhatHappened  string `yaml:"what_happened"`
-	RootCause     string `yaml:"root_cause"`
-	Alternative   string `yaml:"alternative"`
-	Source        string `yaml:"source"`
+	ID           string `yaml:"id"`
+	Name         string `yaml:"name"`
+	Context      string `yaml:"context"`
+	WhatHappened string `yaml:"what_happened"`
+	RootCause    string `yaml:"root_cause"`
+	Alternative  string `yaml:"alternative"`
+	Source       string `yaml:"source"`
 }
 
 // ExtractAntipatterns reads <kbRoot>/anti-patterns/catalog.yaml and

@@ -43,12 +43,12 @@ type ChatMessage struct {
 type SourceKind string
 
 const (
-	SourceRetros        SourceKind = "retros"
-	SourceDecisions     SourceKind = "decisions"
-	SourceAntipatterns  SourceKind = "antipatterns"
-	SourcePatterns      SourceKind = "patterns"
-	SourceTriples       SourceKind = "triples"
-	SourceFailureModes  SourceKind = "failure-modes"
+	SourceRetros       SourceKind = "retros"
+	SourceDecisions    SourceKind = "decisions"
+	SourceAntipatterns SourceKind = "antipatterns"
+	SourcePatterns     SourceKind = "patterns"
+	SourceTriples      SourceKind = "triples"
+	SourceFailureModes SourceKind = "failure-modes"
 )
 
 // AllSources is the canonical ordering.
@@ -80,11 +80,11 @@ func (s SourceKind) SubDir() string {
 
 // BuildConfig drives `olifant dataset build`.
 type BuildConfig struct {
-	KBRoot   string       // knowledge-base root (required)
-	OutDir   string       // <kb-root>/training/<YYYY-MM-DD>/  — per-source subdirs created beneath
-	Sources  []SourceKind // sources to extract; empty = AllSources
-	WriteJSONL bool       // emit JSONL files (default true)
-	Verbose  bool
+	KBRoot     string       // knowledge-base root (required)
+	OutDir     string       // <kb-root>/training/<YYYY-MM-DD>/  — per-source subdirs created beneath
+	Sources    []SourceKind // sources to extract; empty = AllSources
+	WriteJSONL bool         // emit JSONL files (default true)
+	Verbose    bool
 }
 
 // BuildStats summarizes one run. PerSource keys are SourceKind.String().

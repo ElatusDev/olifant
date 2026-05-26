@@ -16,7 +16,7 @@ type Symbol struct {
 	Text   string         `yaml:"text"`   // the identifier as it appears
 	Source string         `yaml:"source"` // file path relative to repo root
 	Line   int            `yaml:"line"`
-	Tags   map[string]any `yaml:"tags"`   // axis name → value
+	Tags   map[string]any `yaml:"tags"` // axis name → value
 }
 
 // Sentence is one extracted clause from a Markdown/doc file. Same tag

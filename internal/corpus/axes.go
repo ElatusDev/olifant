@@ -51,7 +51,7 @@ const (
 	KindConfigKey  = "config_key"
 	KindResource   = "resource" // HCL terraform resource
 	KindFile       = "file"
-	KindID         = "id"     // KB cross-reference IDs (D17, AP3, etc.)
+	KindID         = "id" // KB cross-reference IDs (D17, AP3, etc.)
 	KindAcronym    = "acronym"
 	KindComponent  = "component" // React/React-Native function component
 	KindHook       = "hook"      // React hook (useXxx naming convention)
@@ -116,14 +116,14 @@ const (
 
 // Semantic role enum (sentences) — single-valued, LLM-classified.
 const (
-	RoleDefinition       = "definition"
-	RoleConstraint       = "constraint"
-	RoleRecommendation   = "recommendation"
-	RoleAntiPattern      = "anti-pattern"
-	RoleExample          = "example"
-	RoleRetroNarrative   = "retro-narrative"
+	RoleDefinition        = "definition"
+	RoleConstraint        = "constraint"
+	RoleRecommendation    = "recommendation"
+	RoleAntiPattern       = "anti-pattern"
+	RoleExample           = "example"
+	RoleRetroNarrative    = "retro-narrative"
 	RoleDecisionRationale = "decision-rationale"
-	RoleCitation         = "citation"
+	RoleCitation          = "citation"
 )
 
 // Modality enum (sentences) — single-valued, rule-based.

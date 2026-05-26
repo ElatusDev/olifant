@@ -262,8 +262,8 @@ func TestClassifyTSCallable(t *testing.T) {
 		{"AuthProvider", KindComponent},
 		{"handleClick", ""}, // camelCase helper — skipped
 		{"x", ""},
-		{"use", ""},        // too short
-		{"useany", ""},     // 'use' + lowercase — not a hook by convention
+		{"use", ""},    // too short
+		{"useany", ""}, // 'use' + lowercase — not a hook by convention
 		{"User", KindComponent},
 	}
 	for _, tc := range cases {

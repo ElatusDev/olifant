@@ -33,12 +33,12 @@ type IndexConfig struct {
 
 // IndexStats summarizes one IndexFailureModes call.
 type IndexStats struct {
-	EntriesRead     int
-	Chunks          int
-	Upserted        int
-	BatchesSent     int
-	PerCollection   map[string]int // collection name → upsert count
-	Elapsed         time.Duration
+	EntriesRead   int
+	Chunks        int
+	Upserted      int
+	BatchesSent   int
+	PerCollection map[string]int // collection name → upsert count
+	Elapsed       time.Duration
 }
 
 const (

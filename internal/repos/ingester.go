@@ -160,10 +160,10 @@ func Ingest(ctx context.Context, cfg IngestConfig) (IngestStats, error) {
 
 		coll, err := cc.EnsureCollection(ctx, "code_"+strings.ReplaceAll(scope, "-", "_"),
 			map[string]interface{}{
-				"hnsw:space":     "cosine",
-				"olifant_scope":  scope,
-				"olifant_kind":   "code",
-				"created_at":     time.Now().UTC().Format(time.RFC3339),
+				"hnsw:space":    "cosine",
+				"olifant_scope": scope,
+				"olifant_kind":  "code",
+				"created_at":    time.Now().UTC().Format(time.RFC3339),
 			})
 		if err != nil {
 			return stats, fmt.Errorf("EnsureCollection code_%s: %w", scope, err)

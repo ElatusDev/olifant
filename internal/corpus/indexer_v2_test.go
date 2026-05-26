@@ -7,10 +7,10 @@ import (
 
 func TestSelectKinds(t *testing.T) {
 	cases := []struct {
-		name        string
-		in          []string
-		wantVocab   bool
-		wantProse   bool
+		name      string
+		in        []string
+		wantVocab bool
+		wantProse bool
 	}{
 		{"empty -> both", nil, true, true},
 		{"empty slice -> both", []string{}, true, true},
@@ -189,7 +189,7 @@ func TestV2MetadataForChroma_EmptyAndNilSkipped(t *testing.T) {
 		ID:       "SYM-1",
 		ItemKind: "sentence",
 		Tags: map[string]any{
-			"kind":     "",        // empty string skipped
+			"kind":     "", // empty string skipped
 			"language": "markdown",
 			"":         "ignored", // empty key skipped
 			"concern":  []any{},   // empty list skipped

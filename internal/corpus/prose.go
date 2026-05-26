@@ -357,4 +357,3 @@ func classifyModality(text string) string {
 	}
 	return ""
 }
-

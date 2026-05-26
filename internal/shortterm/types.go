@@ -10,12 +10,12 @@ import (
 
 // TurnRecord is the on-disk shape of a single short-term memory row.
 type TurnRecord struct {
-	TurnID      string         `yaml:"turn_id"`
-	TS          string         `yaml:"ts"`
-	ParentTurn  string         `yaml:"parent_turn,omitempty"`
-	Subcommand  string         `yaml:"subcommand"`
-	Scope       []string       `yaml:"scope,omitempty"`
-	Request     string         `yaml:"request"`
+	TurnID     string   `yaml:"turn_id"`
+	TS         string   `yaml:"ts"`
+	ParentTurn string   `yaml:"parent_turn,omitempty"`
+	Subcommand string   `yaml:"subcommand"`
+	Scope      []string `yaml:"scope,omitempty"`
+	Request    string   `yaml:"request"`
 
 	// Exactly one of these is populated per record.
 	Challenge   *ChallengeBlock   `yaml:"challenge,omitempty"`
@@ -27,12 +27,12 @@ type TurnRecord struct {
 
 // ChallengeBlock captures what the challenge subcommand produced.
 type ChallengeBlock struct {
-	Verdict             string                  `yaml:"verdict"`
-	Proceed             string                  `yaml:"proceed"`
-	RetrievedSources    []string                `yaml:"retrieved_sources,omitempty"`
-	Output              string                  `yaml:"output"`
-	CiteAttempts        int                     `yaml:"cite_attempts"`
-	RemainingViolations []challenge.Violation   `yaml:"remaining_violations,omitempty"`
+	Verdict             string                `yaml:"verdict"`
+	Proceed             string                `yaml:"proceed"`
+	RetrievedSources    []string              `yaml:"retrieved_sources,omitempty"`
+	Output              string                `yaml:"output"`
+	CiteAttempts        int                   `yaml:"cite_attempts"`
+	RemainingViolations []challenge.Violation `yaml:"remaining_violations,omitempty"`
 }
 
 // PromptBuildBlock — placeholder for the upcoming prompt-build subcommand.
@@ -44,13 +44,13 @@ type PromptBuildBlock struct {
 
 // ValidateBlock — placeholder for the upcoming validate subcommand.
 type ValidateBlock struct {
-	ClaudeClaimCount    int      `yaml:"claude_claim_count"`
-	EvidencedClaims     int      `yaml:"evidenced_claims"`
-	UnmatchedClaims     []string `yaml:"unmatched_claims,omitempty"`
-	StandardsSatisfied  []string `yaml:"standards_satisfied,omitempty"`
-	StandardsViolated   []string `yaml:"standards_violated,omitempty"`
-	DiffSHA             string   `yaml:"diff_sha,omitempty"`
-	Verdict             string   `yaml:"verdict"`
+	ClaudeClaimCount   int      `yaml:"claude_claim_count"`
+	EvidencedClaims    int      `yaml:"evidenced_claims"`
+	UnmatchedClaims    []string `yaml:"unmatched_claims,omitempty"`
+	StandardsSatisfied []string `yaml:"standards_satisfied,omitempty"`
+	StandardsViolated  []string `yaml:"standards_violated,omitempty"`
+	DiffSHA            string   `yaml:"diff_sha,omitempty"`
+	Verdict            string   `yaml:"verdict"`
 }
 
 // PerformanceBlock — common timing/metrics across all subcommands.

@@ -38,13 +38,13 @@ type GenConfig struct {
 type Stats struct {
 	Anchors         int
 	Processed       int
-	Skipped         int  // resume-skipped
-	Succeeded       int  // paraphrase call returned valid JSON
-	Failed          int  // paraphrase call exhausted retries
-	RetriedOnce     int  // succeeded but only after 1 retry
+	Skipped         int     // resume-skipped
+	Succeeded       int     // paraphrase call returned valid JSON
+	Failed          int     // paraphrase call exhausted retries
+	RetriedOnce     int     // succeeded but only after 1 retry
 	MeanRatio       float64 // mean(len(paraphrase) / len(anchor))
-	ArtifactIDHits  int  // # paraphrases that retained ≥1 of anchor's artifact IDs
-	ArtifactIDTotal int  // # anchors that had any artifact ID to begin with
+	ArtifactIDHits  int     // # paraphrases that retained ≥1 of anchor's artifact IDs
+	ArtifactIDTotal int     // # anchors that had any artifact ID to begin with
 	Elapsed         time.Duration
 }
 
@@ -121,12 +121,12 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 	defer f.Close()
 
 	var (
-		mu        sync.Mutex
-		ratioSum  float64
-		ratioN    int
-		artifHit  int
-		artifTot  int
-		writeErr  error
+		mu       sync.Mutex
+		ratioSum float64
+		ratioN   int
+		artifHit int
+		artifTot int
+		writeErr error
 	)
 
 	sem := make(chan struct{}, cfg.Concurrency)

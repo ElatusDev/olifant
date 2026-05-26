@@ -16,8 +16,8 @@ import (
 
 // Config drives a single validate run.
 type Config struct {
-	Claim       string  // verbatim claim text (already resolved from --claim file)
-	Diff        string  // verbatim diff text (already resolved from --diff ref or file)
+	Claim       string // verbatim claim text (already resolved from --claim file)
+	Diff        string // verbatim diff text (already resolved from --diff ref or file)
 	OllamaURL   string
 	ChromaURL   string
 	Embedder    string
@@ -47,28 +47,28 @@ const defaultMaxTokens = 4096
 
 // Result is the validator's output.
 type Result struct {
-	RawJSON                 string
-	YAMLOutput              string
-	JSONValid               bool
-	RetrievedCount          int
-	RetrievedSources        []string
-	Elapsed                 time.Duration
-	EmbedMs                 int64
-	RetrieveMs              int64
-	SynthMs                 int64
-	SynthEvalCount          int
-	SynthTokensSec          float64
-	ValidateAttempts        int // 1 = clean on first try; 2+ = retried after blockers
-	RemainingViolations     []challenge.Violation
+	RawJSON             string
+	YAMLOutput          string
+	JSONValid           bool
+	RetrievedCount      int
+	RetrievedSources    []string
+	Elapsed             time.Duration
+	EmbedMs             int64
+	RetrieveMs          int64
+	SynthMs             int64
+	SynthEvalCount      int
+	SynthTokensSec      float64
+	ValidateAttempts    int // 1 = clean on first try; 2+ = retried after blockers
+	RemainingViolations []challenge.Violation
 }
 
 // Run executes one validate round against the configured executor.
 // When Validator is wired, the pipeline is:
-//   1. Retrieve top-N corpus chunks via Chroma using the claim as the
-//      embedding query.
-//   2. Synthesise an assessment with the retrieved context in the prompt.
-//   3. Inspect the output via AssessmentValidator; on BLOCKER violations
-//      retry once with a correction-guidance suffix.
+//  1. Retrieve top-N corpus chunks via Chroma using the claim as the
+//     embedding query.
+//  2. Synthesise an assessment with the retrieved context in the prompt.
+//  3. Inspect the output via AssessmentValidator; on BLOCKER violations
+//     retry once with a correction-guidance suffix.
 //
 // Without Validator, the pipeline degrades to a single synth call (no
 // retrieval, no retry) — useful for unit tests and offline smokes.
@@ -245,9 +245,9 @@ func (r *Result) ExtractVerdict() (verdict, proceed string) {
 }
 
 // ResolveDiff reads diff text from one of three sources:
-//   * a literal git revision range (e.g., HEAD~1..HEAD) — runs git diff
-//   * a path to an existing patch file — reads its contents
-//   * a single commit SHA — runs git show <sha>
+//   - a literal git revision range (e.g., HEAD~1..HEAD) — runs git diff
+//   - a path to an existing patch file — reads its contents
+//   - a single commit SHA — runs git show <sha>
 func ResolveDiff(ref string, repoCwd string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("--diff is required")

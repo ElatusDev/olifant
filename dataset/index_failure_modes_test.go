@@ -88,8 +88,8 @@ func TestComposeFailureModeBody(t *testing.T) {
 func TestGroupFailureModesByScope(t *testing.T) {
 	entries := []failureModeEntry{
 		{ID: "FM1", Scope: "backend", UserPrompt: "q", CorrectAssistantResponse: "a"},
-		{ID: "FM2", Scope: "", UserPrompt: "q", CorrectAssistantResponse: "a"}, // defaults to universal
-		{ID: "FM3", Scope: "backend", UserPrompt: "", CorrectAssistantResponse: ""},  // body empty → drop
+		{ID: "FM2", Scope: "", UserPrompt: "q", CorrectAssistantResponse: "a"},      // defaults to universal
+		{ID: "FM3", Scope: "backend", UserPrompt: "", CorrectAssistantResponse: ""}, // body empty → drop
 	}
 	got := groupFailureModesByScope(entries, "eval/failure-modes/v1.yaml")
 	if len(got["backend"]) != 1 {

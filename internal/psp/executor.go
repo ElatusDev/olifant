@@ -12,7 +12,7 @@ import (
 // Executor is the v0 abstraction over "the thing that runs a step".
 // v0: LocalExecutor (Ollama). v1+: ClaudeAPIExecutor, ClaudeCodeSubprocessExecutor.
 type Executor interface {
-	ID() string                       // for SYN_ACK
+	ID() string // for SYN_ACK
 	Execute(ctx context.Context, prompt string, schema map[string]interface{}) (Response, error)
 }
 

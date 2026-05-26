@@ -12,19 +12,19 @@ import (
 // Runtime resolves connection endpoints + model selections.
 // Override via env vars in this order:
 //
-//   OLIFANT_OLLAMA_URL        e.g., http://100.94.233.106:11434 (default)
-//   OLIFANT_CHROMA_URL        e.g., http://localhost:8000 (default — assumes port-forward)
-//   OLIFANT_EMBEDDER          default: nomic-embed-text
-//   OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
-//   OLIFANT_CHROMA_TENANT     default: default_tenant
-//   OLIFANT_CHROMA_DATABASE   default: default_database
+//	OLIFANT_OLLAMA_URL        e.g., http://100.94.233.106:11434 (default)
+//	OLIFANT_CHROMA_URL        e.g., http://localhost:8000 (default — assumes port-forward)
+//	OLIFANT_EMBEDDER          default: nomic-embed-text
+//	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
+//	OLIFANT_CHROMA_TENANT     default: default_tenant
+//	OLIFANT_CHROMA_DATABASE   default: default_database
 type Runtime struct {
-	OllamaURL       string
-	ChromaURL       string
-	Embedder        string
-	Synthesizer     string
-	ChromaTenant    string
-	ChromaDatabase  string
+	OllamaURL      string
+	ChromaURL      string
+	Embedder       string
+	Synthesizer    string
+	ChromaTenant   string
+	ChromaDatabase string
 }
 
 // Resolve returns runtime config with env-var overrides applied.
