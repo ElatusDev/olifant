@@ -23,6 +23,7 @@ import (
 type GenConfig struct {
 	Triples        []Triple      // anchor + mined negative, from Mine()
 	OutPath        string        // append-only JSONL output (default ~/.olifant/training/embedder-v1/triples.jsonl)
+	FailuresPath   string        // append-only JSONL of per-anchor failures (default: sibling of OutPath as failures.jsonl)
 	ClaudeBin      string        // default "claude"
 	Model          string        // default "opus" (HARD RULE: must remain opus)
 	Resume         bool          // skip anchors already on disk by AnchorID
@@ -33,18 +34,61 @@ type GenConfig struct {
 	Verbose        bool
 }
 
+// FailureKind classifies why a paraphrase call failed. The 2026-05-27 run
+// produced 884 failures with no per-anchor diagnostic; this enum is the
+// vocabulary that re-runs use to surface failure modes.
+type FailureKind string
+
+const (
+	FailTimeout         FailureKind = "timeout"           // context deadline before claude returned
+	FailSubprocess      FailureKind = "subprocess_error" // claude exited non-zero (or could not be exec'd)
+	FailEnvelopeParse   FailureKind = "envelope_parse"   // outer claude JSON envelope malformed
+	FailErrorEnvelope   FailureKind = "error_envelope"   // claude returned is_error=true
+	FailParaphraseParse FailureKind = "paraphrase_parse" // structured_output JSON not {paraphrase: string}
+	FailEmptyParaphrase FailureKind = "empty_paraphrase" // paraphrase field present but empty after trim
+)
+
+// ParaphraseError is the typed error returned by paraphrase() / callClaude()
+// so Generate() can record a classified FailureRow.
+type ParaphraseError struct {
+	Kind   FailureKind
+	Detail string // truncated evidence (raw output snippet, claude stderr, etc.)
+}
+
+func (e *ParaphraseError) Error() string {
+	if e.Detail == "" {
+		return string(e.Kind)
+	}
+	return string(e.Kind) + ": " + e.Detail
+}
+
+// FailureRow is the JSONL-on-disk schema for the failures sidecar.
+type FailureRow struct {
+	AnchorID    string      `json:"anchor_id"`
+	Scope       string      `json:"scope"`
+	AnchorRole  string      `json:"anchor_role"`
+	SourcePath  string      `json:"source_path"`
+	Anchor      string      `json:"anchor"`
+	Kind        FailureKind `json:"kind"`
+	Detail      string      `json:"detail"`
+	Attempts    int         `json:"attempts"` // total tries (1 + retries)
+	GeneratedAt string      `json:"generated_at"`
+}
+
 // Stats summarises one Generate() run. Includes the §4 B1a sanity-quality
 // signals so the CLI can decide whether to halt before the full 7716 run.
 type Stats struct {
 	Anchors         int
 	Processed       int
-	Skipped         int     // resume-skipped
-	Succeeded       int     // paraphrase call returned valid JSON
-	Failed          int     // paraphrase call exhausted retries
-	RetriedOnce     int     // succeeded but only after 1 retry
-	MeanRatio       float64 // mean(len(paraphrase) / len(anchor))
-	ArtifactIDHits  int     // # paraphrases that retained ≥1 of anchor's artifact IDs
-	ArtifactIDTotal int     // # anchors that had any artifact ID to begin with
+	Skipped         int                 // resume-skipped
+	Succeeded       int                 // paraphrase call returned valid JSON
+	Failed          int                 // paraphrase call exhausted retries
+	RetriedOnce     int                 // succeeded but only after 1 retry
+	MeanRatio       float64             // mean(len(paraphrase) / len(anchor))
+	ArtifactIDHits  int                 // # paraphrases that retained ≥1 of anchor's artifact IDs
+	ArtifactIDTotal int                 // # anchors that had any artifact ID to begin with
+	FailuresByKind  map[FailureKind]int // breakdown of Failed by classified kind
+	FailuresPath    string              // resolved path of the failures.jsonl sidecar (empty if none written)
 	Elapsed         time.Duration
 }
 
@@ -97,6 +141,11 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 		return Stats{}, fmt.Errorf("mkdir out: %w", err)
 	}
 
+	failuresPath := cfg.FailuresPath
+	if failuresPath == "" {
+		failuresPath = filepath.Join(filepath.Dir(out), "failures.jsonl")
+	}
+
 	existing := map[string]bool{}
 	if cfg.Resume {
 		seen, err := loadExistingAnchorIDs(out)
@@ -111,7 +160,7 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 		work = work[:cfg.Limit]
 	}
 
-	st := Stats{Anchors: len(work)}
+	st := Stats{Anchors: len(work), FailuresByKind: map[FailureKind]int{}}
 	start := time.Now()
 
 	f, err := os.OpenFile(out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -119,6 +168,17 @@ func Generate(ctx context.Context, cfg GenConfig) (Stats, error) {
 		return st, fmt.Errorf("open out: %w", err)
 	}
 	defer f.Close()
+
+	// Failures sidecar — opened lazily on first failure so a clean run leaves no file.
+	var (
+		failuresFile    *os.File
+		failuresWritten bool
+	)
+	defer func() {
+		if failuresFile != nil {
+			failuresFile.Close()
+		}
+	}()
 
 	var (
 		mu       sync.Mutex
@@ -150,20 +210,54 @@ dispatch:
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			pos, retried, err := paraphrase(ctx, cfg, tr.Anchor)
+			pos, attempts, err := paraphrase(ctx, cfg, tr.Anchor)
 			mu.Lock()
 			defer mu.Unlock()
 			st.Processed++
 			if err != nil {
 				st.Failed++
+				kind := FailureKind("unknown")
+				detail := err.Error()
+				var pe *ParaphraseError
+				if errors.As(err, &pe) {
+					kind = pe.Kind
+					detail = pe.Detail
+				}
+				st.FailuresByKind[kind]++
+				if failuresFile == nil {
+					ff, ferr := os.OpenFile(failuresPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+					if ferr != nil {
+						writeErr = fmt.Errorf("open failures: %w", ferr)
+						return
+					}
+					failuresFile = ff
+				}
+				row := FailureRow{
+					AnchorID:    tr.AnchorID,
+					Scope:       tr.Scope,
+					AnchorRole:  tr.AnchorRole,
+					SourcePath:  tr.SourcePath,
+					Anchor:      tr.Anchor,
+					Kind:        kind,
+					Detail:      detail,
+					Attempts:    attempts,
+					GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+				}
+				if line, jerr := json.Marshal(row); jerr != nil {
+					writeErr = fmt.Errorf("marshal failure %s: %w", tr.AnchorID, jerr)
+				} else if _, werr := failuresFile.Write(append(line, '\n')); werr != nil {
+					writeErr = fmt.Errorf("write failure %s: %w", tr.AnchorID, werr)
+				} else {
+					failuresWritten = true
+				}
 				if cfg.Verbose {
-					fmt.Fprintf(os.Stderr, "[%d/%d] anchor=%s FAILED: %v\n",
-						idx+1, len(work), tr.AnchorID, err)
+					fmt.Fprintf(os.Stderr, "[%d/%d] anchor=%s FAILED kind=%s: %s\n",
+						idx+1, len(work), tr.AnchorID, kind, truncStr(detail, 120))
 				}
 				return
 			}
 			st.Succeeded++
-			if retried {
+			if attempts > 1 {
 				st.RetriedOnce++
 			}
 
@@ -202,7 +296,7 @@ dispatch:
 			}
 			if cfg.Verbose {
 				retryStr := ""
-				if retried {
+				if attempts > 1 {
 					retryStr = " (retried)"
 				}
 				fmt.Fprintf(os.Stderr, "[%d/%d] anchor=%s ratio=%.2f%s\n",
@@ -218,6 +312,9 @@ dispatch:
 	}
 	st.ArtifactIDHits = artifHit
 	st.ArtifactIDTotal = artifTot
+	if failuresWritten {
+		st.FailuresPath = failuresPath
+	}
 	if writeErr != nil {
 		return st, writeErr
 	}
@@ -225,17 +322,19 @@ dispatch:
 }
 
 // paraphrase shells out to `claude --print --model opus` with a JSON-schema-
-// constrained prompt and returns the extracted paraphrase string.
-func paraphrase(ctx context.Context, cfg GenConfig, anchor string) (string, bool, error) {
+// constrained prompt and returns the extracted paraphrase string. On failure
+// the returned error is always a *ParaphraseError (kind-classified).
+//
+// The returned attempts count is total tries (1 + retries actually performed),
+// so callers can attribute "succeeded after retry" vs "exhausted retries".
+func paraphrase(ctx context.Context, cfg GenConfig, anchor string) (string, int, error) {
 	prompt := buildParaphrasePrompt(anchor)
 	schema := paraphraseSchema()
 
-	retried := false
+	attempts := 0
 	var lastErr error
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
-		if attempt > 0 {
-			retried = true
-		}
+		attempts = attempt + 1
 		raw, err := callClaude(ctx, cfg, prompt, schema)
 		if err != nil {
 			lastErr = err
@@ -245,17 +344,20 @@ func paraphrase(ctx context.Context, cfg GenConfig, anchor string) (string, bool
 			Paraphrase string `json:"paraphrase"`
 		}
 		if err := json.Unmarshal([]byte(raw), &out); err != nil {
-			lastErr = fmt.Errorf("parse JSON: %w (raw=%q)", err, truncStr(raw, 200))
+			lastErr = &ParaphraseError{
+				Kind:   FailParaphraseParse,
+				Detail: fmt.Sprintf("%v (raw=%s)", err, truncStr(raw, 200)),
+			}
 			continue
 		}
 		p := strings.TrimSpace(out.Paraphrase)
 		if p == "" {
-			lastErr = errors.New("empty paraphrase in response")
+			lastErr = &ParaphraseError{Kind: FailEmptyParaphrase, Detail: truncStr(raw, 200)}
 			continue
 		}
-		return p, retried, nil
+		return p, attempts, nil
 	}
-	return "", retried, lastErr
+	return "", attempts, lastErr
 }
 
 func buildParaphrasePrompt(anchor string) string {
@@ -298,7 +400,13 @@ func callClaude(ctx context.Context, cfg GenConfig, prompt string, schema map[st
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude subprocess: %w (stderr=%s)", err, truncStr(stderr.String(), 200))
+		if cctx.Err() == context.DeadlineExceeded {
+			return "", &ParaphraseError{Kind: FailTimeout, Detail: truncStr(stderr.String(), 200)}
+		}
+		return "", &ParaphraseError{
+			Kind:   FailSubprocess,
+			Detail: fmt.Sprintf("%v (stderr=%s)", err, truncStr(stderr.String(), 200)),
+		}
 	}
 
 	if schema == nil {
@@ -312,11 +420,13 @@ func callClaude(ctx context.Context, cfg GenConfig, prompt string, schema map[st
 		Subtype          string          `json:"subtype"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
-		return "", fmt.Errorf("parse claude envelope: %w (stdout=%q)",
-			err, truncStr(stdout.String(), 200))
+		return "", &ParaphraseError{
+			Kind:   FailEnvelopeParse,
+			Detail: fmt.Sprintf("%v (stdout=%s)", err, truncStr(stdout.String(), 200)),
+		}
 	}
 	if env.IsError {
-		return "", fmt.Errorf("claude error envelope: %s", env.Subtype)
+		return "", &ParaphraseError{Kind: FailErrorEnvelope, Detail: env.Subtype}
 	}
 	if len(env.StructuredOutput) > 0 {
 		return string(env.StructuredOutput), nil

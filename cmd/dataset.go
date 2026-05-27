@@ -458,6 +458,7 @@ func datasetEmbedderTriples(args []string) int {
 	proseDir := fs.String("prose-dir", "", "v2-curriculum prose dir (default: <kb-root>/corpus/v2-curriculum/prose)")
 	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect via cwd ancestors)")
 	out := fs.String("out", "", "JSONL output path (default: ~/.olifant/training/embedder-v1/triples.jsonl)")
+	failuresPath := fs.String("failures-out", "", "JSONL failures sidecar path (default: sibling of --out as failures.jsonl)")
 	model := fs.String("model", "opus", "claude model (must remain opus per HARD RULE)")
 	bin := fs.String("claude-bin", "claude", "claude CLI binary")
 	limit := fs.Int("limit", 0, "process only first N anchors (0 = all; 1000 for §4 B1a sanity gate)")
@@ -525,6 +526,7 @@ func datasetEmbedderTriples(args []string) int {
 	stats, err := embedder.Generate(ctx, embedder.GenConfig{
 		Triples:        triples,
 		OutPath:        *out,
+		FailuresPath:   *failuresPath,
 		ClaudeBin:      *bin,
 		Model:          *model,
 		Resume:         *resume,
@@ -557,5 +559,19 @@ func datasetEmbedderTriples(args []string) int {
 			stats.ArtifactIDHits, stats.ArtifactIDTotal, idRate)
 	}
 	fmt.Printf("  elapsed:              %s\n", stats.Elapsed.Round(time.Second))
+	if stats.Failed > 0 && len(stats.FailuresByKind) > 0 {
+		fmt.Println("  failures by kind:")
+		kinds := make([]string, 0, len(stats.FailuresByKind))
+		for k := range stats.FailuresByKind {
+			kinds = append(kinds, string(k))
+		}
+		sort.Strings(kinds)
+		for _, k := range kinds {
+			fmt.Printf("    %-18s %d\n", k, stats.FailuresByKind[embedder.FailureKind(k)])
+		}
+	}
+	if stats.FailuresPath != "" {
+		fmt.Printf("  failures sidecar:     %s\n", stats.FailuresPath)
+	}
 	return 0
 }
