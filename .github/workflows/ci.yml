@@ -49,6 +49,7 @@ jobs:
         # exemption. Packages with no _test.go files count as 0% and fail.
         # Coverage exclusion (sonar.coverage.exclusions etc.) is banned per
         # feedback_no_sonar_exclusions.md — fix coverage by writing tests.
+        shell: bash
         run: |
           set -uo pipefail
           floor="${COVERAGE_FLOOR}"
@@ -61,9 +62,16 @@ jobs:
           go test -coverprofile=coverage.out -covermode=count -count=1 ./... \
             | tee coverage-summary.txt
 
-          # Parse summary lines into (pkg, pct) pairs. `ok` lines carry a
-          # `coverage: NN.N% of statements` clause; `?` lines (no test
-          # files) get treated as 0.0% — failing the gate.
+          # Parse summary lines into (pkg, pct) pairs. `go test ./...`
+          # under -coverprofile emits two line shapes (no `?` lines; the
+          # untested-package marker is just a tab-prefixed line with 0.0%):
+          #
+          #   "ok  \t<pkg>\t<elapsed>\tcoverage: NN.N% of statements"
+          #   "    \t<pkg>\t        \tcoverage: 0.0% of statements"
+          #
+          # Treat both uniformly; the tab-prefixed form covers packages
+          # with no _test.go files (root package + 5 internal packages
+          # at this commit) and they correctly score 0.0% → FAIL.
           fail=0
           {
             echo "package | coverage | verdict"
@@ -71,24 +79,20 @@ jobs:
           } > /tmp/cov-table.md
           while IFS= read -r line; do
             case "$line" in
-              ok*coverage:*)
-                pkg=$(awk '{print $2}' <<<"$line")
-                pct=$(grep -oE 'coverage: [0-9.]+%' <<<"$line" | grep -oE '[0-9.]+')
-                ;;
-              ok*"[no statements]"*)
-                # Packages with code but no measurable statements (rare;
-                # e.g. interface-only). Treat as PASS.
-                pkg=$(awk '{print $2}' <<<"$line")
-                pct="100.0"
-                ;;
-              \?*"[no test files]"*)
-                pkg=$(awk '{print $2}' <<<"$line")
-                pct="0.0"
-                ;;
-              *)
-                continue
-                ;;
+              *coverage:*) ;;
+              *) continue ;;
             esac
+            # Field-1 vs field-2 depends on whether the line starts with `ok`.
+            if [[ "$line" =~ ^ok[[:space:]] ]]; then
+              pkg=$(awk '{print $2}' <<<"$line")
+            else
+              pkg=$(awk '{print $1}' <<<"$line")
+            fi
+            pct=$(grep -oE 'coverage: [0-9.]+%' <<<"$line" | grep -oE '[0-9.]+')
+            if [ -z "$pct" ]; then
+              # `[no statements]` style — interface-only or generated code.
+              pct="100.0"
+            fi
             verdict=$(awk -v p="$pct" -v f="$floor" 'BEGIN { print (p+0 >= f+0) ? "PASS" : "FAIL" }')
             echo "$pkg | $pct% | $verdict" >> /tmp/cov-table.md
             if [ "$verdict" = "FAIL" ]; then
