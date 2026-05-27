@@ -47,6 +47,8 @@ func main() {
 		os.Exit(cmd.History(args))
 	case "dataset":
 		os.Exit(cmd.Dataset(args))
+	case "embedder":
+		os.Exit(cmd.Embedder(args))
 	case "version", "--version", "-v":
 		fmt.Println("olifant", version)
 	case "help", "--help", "-h":
@@ -77,6 +79,7 @@ SUBCOMMANDS:
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
   history      scan — walk repo commit history and emit JSONL training data
   dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB
+  embedder     train | pull | ls — Phase B1b domain-embedder training on Modal
   version      print version
   help         this message
 
