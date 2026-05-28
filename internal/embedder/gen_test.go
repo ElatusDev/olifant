@@ -175,6 +175,89 @@ func TestGenerate_RetryThenFail(t *testing.T) {
 	}
 }
 
+// TestGenerate_FailureSidecarSubprocess verifies that a non-zero claude exit
+// is classified as FailSubprocess, written to failures.jsonl, and surfaced in
+// stats. Regression guard for the 2026-05-27 884-silent-failures incident.
+func TestGenerate_FailureSidecarSubprocess(t *testing.T) {
+	bin := stubClaudeBin(t)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "triples.jsonl")
+	failures := filepath.Join(dir, "failures.jsonl")
+
+	t.Setenv("STUB_FAIL", "1")
+	st, err := Generate(context.Background(), GenConfig{
+		Triples: []Triple{
+			{AnchorID: "SYM-A", Anchor: "x.", NegativeID: "SYM-B", Negative: "y.", Scope: "backend", AnchorRole: "constraint", NegativeRole: "definition", SourcePath: "z.md"},
+		},
+		OutPath:        out,
+		FailuresPath:   failures,
+		ClaudeBin:      bin,
+		Model:          "opus",
+		Concurrency:    1,
+		PerCallTimeout: 5 * time.Second,
+		MaxRetries:     1,
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if st.Failed != 1 {
+		t.Fatalf("expected 1 failure, got %+v", st)
+	}
+	if got := st.FailuresByKind[FailSubprocess]; got != 1 {
+		t.Errorf("FailuresByKind[%s] = %d, want 1 (got map=%v)", FailSubprocess, got, st.FailuresByKind)
+	}
+	if st.FailuresPath != failures {
+		t.Errorf("FailuresPath = %q, want %q", st.FailuresPath, failures)
+	}
+	raw, err := os.ReadFile(failures)
+	if err != nil {
+		t.Fatalf("read failures: %v", err)
+	}
+	var row FailureRow
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &row); err != nil {
+		t.Fatalf("unmarshal failure row: %v: %q", err, string(raw))
+	}
+	if row.AnchorID != "SYM-A" || row.Kind != FailSubprocess || row.Attempts != 2 {
+		t.Errorf("row=%+v: want AnchorID=SYM-A, Kind=%s, Attempts=2", row, FailSubprocess)
+	}
+	if row.SourcePath != "z.md" || row.Scope != "backend" {
+		t.Errorf("row lost metadata: %+v", row)
+	}
+}
+
+// TestGenerate_NoFailureFileOnClean verifies the sidecar is not created when
+// every anchor succeeds — keeps clean runs tidy.
+func TestGenerate_NoFailureFileOnClean(t *testing.T) {
+	bin := stubClaudeBin(t)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "triples.jsonl")
+	failures := filepath.Join(dir, "failures.jsonl")
+
+	st, err := Generate(context.Background(), GenConfig{
+		Triples: []Triple{
+			{AnchorID: "SYM-A", Anchor: "x.", NegativeID: "SYM-B", Negative: "y.", Scope: "backend", AnchorRole: "constraint", NegativeRole: "definition"},
+		},
+		OutPath:        out,
+		FailuresPath:   failures,
+		ClaudeBin:      bin,
+		Model:          "opus",
+		Concurrency:    1,
+		PerCallTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if st.Succeeded != 1 {
+		t.Fatalf("expected 1 success, got %+v", st)
+	}
+	if st.FailuresPath != "" {
+		t.Errorf("FailuresPath should be empty on clean run, got %q", st.FailuresPath)
+	}
+	if _, err := os.Stat(failures); !os.IsNotExist(err) {
+		t.Errorf("failures file should not exist, stat err=%v", err)
+	}
+}
+
 // TestAnchorIDsIn covers the regex used for the "artifact-ID retention" sanity signal.
 func TestAnchorIDsIn(t *testing.T) {
 	cases := []struct {
