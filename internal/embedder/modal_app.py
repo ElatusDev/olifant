@@ -30,13 +30,14 @@ MODEL_OUT_DIR = "/data/embedders/v1/model"
 MANIFEST_PATH = "/data/embedders/v1/manifest.yaml"
 LOSS_LOG_PATH = "/data/embedders/v1/loss-log.csv"
 
-BATCH_SIZE = 64
+BATCH_SIZE = 32          # 64 OOM'd nomic-bert-2048 on A10G (22 GiB); halved per B1b retry policy
+MAX_SEQ_LEN = 512        # cap nomic's multi-K context: corpus sentences max ~500 tok (p90 ~83); no truncation, bounds attention memory
 EPOCHS = 3
 LEARNING_RATE = 2e-5
 WARMUP_RATIO = 0.1
 SEED = 42
 
-GPU = "A10G"
+GPU = "A100"  # A10G (22 GiB) OOM'd at ~8% even with batch=32/seq=512; A100 (40 GiB) preserves the recipe
 TIMEOUT_SEC = 2 * 60 * 60  # 2 h hard ceiling
 
 app = modal.App(APP_NAME)
@@ -45,11 +46,16 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=False)
 train_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "sentence-transformers>=3.0.0",
+        # Pin to the dependency era nomic-bert-2048's trust_remote_code + the
+        # scaffold's classic model.fit() were written for. transformers 5.x
+        # double-nests the encoder state_dict (encoder.encoder.*) → saved model
+        # reloads with random weights → NaN embeddings; it also drove a nan
+        # grad_norm. ST 2.x uses the classic fit() loop (no datasets/accelerate).
+        "sentence-transformers>=2.7.0,<3.0.0",
         "torch>=2.1.0,<2.6.0",
-        "transformers>=4.40.0",
+        "transformers>=4.40.0,<5.0.0",
         "einops>=0.7.0",          # nomic-embed-text-v1.5 dependency
-        "huggingface_hub>=0.26.0",
+        "huggingface_hub>=0.23.0,<0.26.0",
         "PyYAML>=6.0",
     )
 )
@@ -84,6 +90,10 @@ def _build_examples(triples):
 
 def _train(train_set, eval_set, *, dry_run: bool):
     import os
+
+    # Reduce CUDA fragmentation (suggested by the OOM that batch=64 hit).
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import time
 
     import yaml
@@ -94,6 +104,7 @@ def _train(train_set, eval_set, *, dry_run: bool):
     os.makedirs(MODEL_OUT_DIR, exist_ok=True)
 
     model = SentenceTransformer(BASE_MODEL, trust_remote_code=True)
+    model.max_seq_length = MAX_SEQ_LEN  # nomic defaults to a multi-K context → OOM at batch size; cap to sentence scale
 
     train_examples = _build_examples(train_set)
     train_loader = DataLoader(train_examples, shuffle=True, batch_size=BATCH_SIZE)
@@ -133,6 +144,7 @@ def _train(train_set, eval_set, *, dry_run: bool):
         "eval_count": len(eval_set),
         "epochs": epochs,
         "batch_size": BATCH_SIZE,
+        "max_seq_len": MAX_SEQ_LEN,
         "learning_rate": LEARNING_RATE,
         "warmup_ratio": WARMUP_RATIO,
         "warmup_steps": warmup_steps,
@@ -197,3 +209,45 @@ def ls():
                 print(f"{p} ({sz:,} B)")
             except OSError as e:
                 print(f"{p} (stat error: {e})")
+
+
+@app.function(gpu=GPU, image=train_image, volumes={"/data": volume}, timeout=10 * 60)
+def inspect():
+    """Validate the trained B1b model server-side (the local `volume get` path is
+    blocked by an expired corp TLS-interception cert). Dumps manifest + loss-log,
+    then measures real held-out triplet accuracy + NaN — the HF Trainer log's
+    int-truncated '0' accuracy display is unreliable."""
+    import os
+
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+
+    for p in (MANIFEST_PATH, LOSS_LOG_PATH):
+        print(f"===== {p} =====")
+        print(open(p).read() if os.path.exists(p) else "(missing)")
+
+    _train_set, eval_set = _load_triples()  # same SEED → same held-out split as training
+    model = SentenceTransformer(MODEL_OUT_DIR, trust_remote_code=True)
+    model.max_seq_length = MAX_SEQ_LEN
+
+    enc = lambda xs: model.encode(xs, normalize_embeddings=True, show_progress_bar=False)
+    ea = enc([t["anchor"] for t in eval_set])
+    ep = enc([t["positive"] for t in eval_set])
+    en = enc([t["negative"] for t in eval_set])
+
+    nan_rows = int(
+        np.isnan(ea).any(axis=1).sum()
+        + np.isnan(ep).any(axis=1).sum()
+        + np.isnan(en).any(axis=1).sum()
+    )
+    sim_pos = (ea * ep).sum(axis=1)
+    sim_neg = (ea * en).sum(axis=1)
+    acc = float((sim_pos > sim_neg).mean())
+
+    print("===== validation =====")
+    print(f"eval triples:                {len(eval_set)}")
+    print(f"embedding dim:               {ea.shape[1]}")
+    print(f"rows with NaN embedding:     {nan_rows}")
+    print(f"mean cos(anchor, positive):  {float(sim_pos.mean()):.4f}")
+    print(f"mean cos(anchor, negative):  {float(sim_neg.mean()):.4f}")
+    print(f"held-out triplet accuracy:   {acc:.4f}  (cos(a,p) > cos(a,n); ~0.5 = broken/random)")
