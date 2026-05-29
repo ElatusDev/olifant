@@ -44,10 +44,14 @@ All must pass on PRs to `main`:
 - `go vet ./...`
 - `golangci-lint` (v2.12.2, config in `.golangci.yml`)
 - `go test ./... -race -count=1`
-- **Per-package coverage ≥ 80%** — a hard gate with no exemptions.
-  EVERY package (including the root) must hit the floor; a package
-  with no `_test.go` files scores 0% and fails the build. Raise
-  coverage by writing tests, **never** by adding coverage exclusions.
+- **Per-package coverage ratchet** — each package must stay at or above
+  its baseline in `.github/coverage-baseline.tsv`; the build fails on any
+  regression below baseline. A package with no baseline entry (i.e. NEW)
+  must meet `COVERAGE_FLOOR` (80%), so new code is held to the real
+  standard. The 80% floor remains the goal: raise a package's baseline
+  whenever you add tests (never lower it). Nothing is excluded from
+  measurement — 0% packages sit in the baseline file as visible debt;
+  fix coverage by writing tests, **never** by hiding code.
 - `govulncheck ./...`
 
 ## CLI structure

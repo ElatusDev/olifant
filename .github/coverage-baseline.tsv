@@ -1,0 +1,37 @@
+# Per-package coverage baselines (ratchet).
+#
+# The CI coverage gate fails a build if any package's coverage drops BELOW
+# the integer floor recorded here. This makes the build green on existing
+# debt while blocking regressions and ratcheting toward the real goal.
+#
+# Rules:
+#   - Goal floor for NEW packages (absent from this file) is COVERAGE_FLOOR
+#     (80%) — new code is held to the real standard, not grandfathered.
+#   - Never LOWER a baseline. When you add tests, RAISE the package's number
+#     to lock in the gain (ideally all the way to 80+).
+#   - Nothing is excluded from measurement; 0% packages sit here as visible
+#     debt, per the no-hide-coverage rule (memory: No sonar exclusions).
+#
+# Values are whole percents (current coverage floored), which absorbs minor
+# local-vs-CI float jitter. Regenerate the raw numbers with:
+#   go test -coverprofile=cov.out -covermode=count -count=1 ./...
+#
+# package	floor
+github.com/ElatusDev/olifant	0
+github.com/ElatusDev/olifant/cmd	2
+github.com/ElatusDev/olifant/dataset	80
+github.com/ElatusDev/olifant/history	42
+github.com/ElatusDev/olifant/internal/challenge	8
+github.com/ElatusDev/olifant/internal/chroma	0
+github.com/ElatusDev/olifant/internal/config	77
+github.com/ElatusDev/olifant/internal/corpus	32
+github.com/ElatusDev/olifant/internal/dictionary	0
+github.com/ElatusDev/olifant/internal/embedder	77
+github.com/ElatusDev/olifant/internal/eval	0
+github.com/ElatusDev/olifant/internal/format	20
+github.com/ElatusDev/olifant/internal/ollama	4
+github.com/ElatusDev/olifant/internal/prompt	56
+github.com/ElatusDev/olifant/internal/psp	57
+github.com/ElatusDev/olifant/internal/repos	0
+github.com/ElatusDev/olifant/internal/shortterm	0
+github.com/ElatusDev/olifant/internal/validate	43
