@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls knowledge-base *)",
+      "Bash(ls corpus *)",
+      "Bash(ls dsl *)",
+      "Bash(ls architecture *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git branch *)",
+      "Bash(git switch *)",
+      "Bash(git reset *)",
+      "Bash(git push *)",
+      "Bash(gh repo *)",
+      "Bash(gh pr *)"
+    ]
+  }
+}
