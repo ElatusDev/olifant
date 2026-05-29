@@ -11,11 +11,14 @@ execution plans, runs those plans across local + cloud models, and
 validates the results. It is a sibling of `platform-knowledge-base/`
 inside the `platform/` tree and is meant to be run from there.
 
-**Path gotcha:** specs and code comments say `platform/knowledge-base/`,
-but the directory on disk is `platform-knowledge-base/`. The corpus
-builder autodetects KB by walking up for `knowledge-base/README.md`,
-which will NOT match this layout — pass `--kb-root
-../platform-knowledge-base` explicitly to `corpus`/`repo` commands.
+**Path note:** specs and code comments say `platform/knowledge-base/`, and
+the real directory on disk is `platform-knowledge-base/`. A
+`knowledge-base` → `platform-knowledge-base` symlink now exists at the
+platform root, so the corpus builder's autodetect
+(`findUp("knowledge-base/README.md")`) resolves to `<platform>/knowledge-base`
+and reads through the symlink correctly — no flag needed. To pin the real
+directory instead, pass `--kb-root ../platform-knowledge-base` explicitly to
+`corpus`/`repo` commands.
 
 ## Commands
 
