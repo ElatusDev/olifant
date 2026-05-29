@@ -1,18 +1,30 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": { "commit": "", "pr": "" },
   "permissions": {
     "allow": [
-      "Bash(ls knowledge-base *)",
-      "Bash(ls corpus *)",
-      "Bash(ls dsl *)",
-      "Bash(ls architecture *)",
-      "Bash(git add *)",
-      "Bash(git commit -m ' *)",
-      "Bash(git branch *)",
-      "Bash(git switch *)",
-      "Bash(git reset *)",
-      "Bash(git push *)",
-      "Bash(gh repo *)",
-      "Bash(gh pr *)"
+      "Read", "Grep", "Glob", "Edit", "Write",
+      "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git branch*)", "Bash(git fetch*)", "Bash(git add*)", "Bash(git commit*)", "Bash(git switch*)", "Bash(git stash*)",
+      "Bash(ls *)", "Bash(cat *)", "Bash(find *)", "Bash(grep *)", "Bash(rg *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)", "Bash(which *)", "Bash(pwd)",
+      "Bash(go build*)", "Bash(go test*)", "Bash(go vet*)", "Bash(go run*)", "Bash(go fmt*)", "Bash(gofmt*)", "Bash(go mod*)", "Bash(golangci-lint*)", "Bash(govulncheck*)", "Bash(make *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)", "Bash(rm -rf /*)", "Bash(sudo *)",
+      "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git reset --hard*)", "Bash(git clean -f*)", "Bash(git branch -D*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "gofmt",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [ -n \"$f\" ] || exit 0; case \"$f\" in *.go) command -v gofmt >/dev/null 2>&1 && gofmt -w \"$f\" ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
     ]
   }
 }
