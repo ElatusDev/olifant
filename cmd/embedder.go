@@ -11,11 +11,19 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
+
+	"github.com/ElatusDev/olifant/internal/config"
+	"github.com/ElatusDev/olifant/internal/embedder"
+	"github.com/ElatusDev/olifant/internal/ollama"
 )
 
 // defaultModalApp is the on-disk path to modal_app.py relative to the
@@ -36,10 +44,10 @@ const defaultModelLocalSub = ".olifant/training/embedder-v1/model"
 // defaultModelRemote is the Modal-side dir to pull (under /embedders/v1/).
 const defaultModelRemote = "/embedders/v1/model"
 
-// Embedder dispatches `olifant embedder <train|pull|ls>`.
+// Embedder dispatches `olifant embedder <train|pull|ls|recall>`.
 func Embedder(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant embedder: missing action (train|pull|ls)")
+		fmt.Fprintln(os.Stderr, "olifant embedder: missing action (train|pull|ls|recall)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -50,6 +58,8 @@ func Embedder(args []string) int {
 		return embedderPull(rest)
 	case "ls":
 		return embedderLs(rest)
+	case "recall":
+		return embedderRecall(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant embedder: unknown action %q\n", action)
 		return 2
@@ -147,6 +157,211 @@ func embedderPull(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// defaultRecallRemoteDir is where the recall input JSONLs land on the
+// Modal volume. Matches modal_app.py's RECALL_*_PATH (under /data).
+const defaultRecallRemoteDir = "/embedder-v1/recall"
+
+// embedderRecall runs the B1c recall@5 comparison: baseline embedder via
+// Ollama locally, candidate embedder server-side on Modal, both ranked
+// against the full prose corpus; emits recall-at-5-report.json and a
+// gate GB1 summary.
+func embedderRecall(args []string) int {
+	fs := flag.NewFlagSet("embedder recall", flag.ExitOnError)
+	queriesPath := fs.String("queries", "", "recall suite YAML (required)")
+	proseDir := fs.String("prose-dir", "", "v2-curriculum prose dir (default: <kb-root>/corpus/v2-curriculum/prose)")
+	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect via cwd ancestors)")
+	baseline := fs.String("baseline", "nomic", "baseline embedder (only `nomic` supported: Ollama-served)")
+	candidate := fs.String("candidate", "v1", "candidate embedder (only `v1` supported: Modal-served)")
+	topK := fs.Int("top-k", 10, "hits recorded per query (recall is scored at 5)")
+	batch := fs.Int("batch", 64, "Ollama embed batch size")
+	out := fs.String("out", "", "report path (default ~/.olifant/training/embedder-v1/recall-at-5-report.json)")
+	modalBin := fs.String("modal-bin", "modal", "modal CLI binary")
+	appPath := fs.String("app", defaultModalApp, "modal app file path")
+	volume := fs.String("volume", defaultVolumeName, "modal volume name")
+	skipUpload := fs.Bool("skip-upload", false, "skip volume put of recall inputs (use existing volume copies)")
+	_ = fs.Parse(args)
+
+	if *queriesPath == "" {
+		fmt.Fprintln(os.Stderr, "embedder recall: --queries is required")
+		return 2
+	}
+	if *baseline != "nomic" || *candidate != "v1" {
+		fmt.Fprintf(os.Stderr, "embedder recall: unsupported pair baseline=%q candidate=%q\n", *baseline, *candidate)
+		return 2
+	}
+
+	suite, err := embedder.LoadRecallSuite(*queriesPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: load suite:", err)
+		return 1
+	}
+
+	prose := *proseDir
+	if prose == "" {
+		root := *kbRoot
+		if root == "" {
+			if found, ok := findUp("knowledge-base/README.md"); ok {
+				root = filepath.Dir(found)
+			}
+		}
+		if root == "" {
+			fmt.Fprintln(os.Stderr, "embedder recall: --prose-dir or --kb-root required (autodetect failed)")
+			return 2
+		}
+		prose = filepath.Join(root, "corpus", "v2-curriculum", "prose")
+	}
+	sents, err := embedder.LoadProse(prose)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: load prose:", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "suite %s: %d queries; corpus: %d sentences\n", suite.SuiteID, len(suite.Queries), len(sents))
+
+	reportPath := *out
+	if reportPath == "" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			fmt.Fprintln(os.Stderr, "embedder recall: cannot resolve home dir:", herr)
+			return 1
+		}
+		reportPath = filepath.Join(home, ".olifant", "training", "embedder-v1", "recall-at-5-report.json")
+	}
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: mkdir:", err)
+		return 1
+	}
+
+	candResults, rc := recallCandidate(suite.Queries, sents, *topK, *modalBin, *appPath, *volume, *skipUpload, filepath.Dir(reportPath))
+	if rc != 0 {
+		return rc
+	}
+	baseResults, rc := recallBaseline(suite.Queries, sents, *topK, *batch)
+	if rc != 0 {
+		return rc
+	}
+
+	report := embedder.BuildReport(suite.SuiteID,
+		embedder.EmbedderRecall{Name: "nomic-embed-text (ollama)", Recall5: embedder.RecallAt(baseResults, embedder.RecallK), Results: baseResults},
+		embedder.EmbedderRecall{Name: "domain-v1 (modal)", Recall5: embedder.RecallAt(candResults, embedder.RecallK), Results: candResults},
+	)
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: marshal report:", err)
+		return 1
+	}
+	if err := os.WriteFile(reportPath, raw, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: write report:", err)
+		return 1
+	}
+
+	fmt.Printf("recall@5  baseline  %-28s %.3f\n", report.Baseline.Name, report.Baseline.Recall5)
+	fmt.Printf("recall@5  candidate %-28s %.3f\n", report.Candidate.Name, report.Candidate.Recall5)
+	fmt.Printf("relative improvement: %+.1f%%  (gate GB1 threshold: ≥%+.0f%%)\n",
+		report.RelativeImprovement*100, report.GateThreshold*100)
+	if report.GatePass {
+		fmt.Println("gate GB1: PASS (user GO/NO-GO still required)")
+	} else {
+		fmt.Println("gate GB1: FAIL")
+	}
+	fmt.Println("report:", reportPath)
+	return 0
+}
+
+// recallBaseline embeds queries + corpus via the Ollama-served nomic
+// embedder and ranks locally.
+func recallBaseline(queries []embedder.Query, sents []embedder.Sentence, topK, batch int) ([]embedder.QueryResult, int) {
+	cfg := config.Resolve()
+	oc := ollama.New(cfg.OllamaURL)
+	defer oc.CloseIdle()
+	ctx := context.Background()
+
+	texts := make([]string, len(sents))
+	for i, s := range sents {
+		texts[i] = s.Text
+	}
+	sentVecs := make([][]float32, 0, len(sents))
+	start := time.Now()
+	for lo := 0; lo < len(texts); lo += batch {
+		hi := lo + batch
+		if hi > len(texts) {
+			hi = len(texts)
+		}
+		vecs, err := oc.Embed(ctx, cfg.Embedder, texts[lo:hi])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "embedder recall: ollama embed sentences [%d:%d]: %v\n", lo, hi, err)
+			return nil, 1
+		}
+		sentVecs = append(sentVecs, vecs...)
+		if lo/batch%10 == 0 {
+			fmt.Fprintf(os.Stderr, "baseline: embedded %d/%d sentences (%.0fs)\n", hi, len(texts), time.Since(start).Seconds())
+		}
+	}
+
+	results := make([]embedder.QueryResult, 0, len(queries))
+	for _, q := range queries {
+		qv, err := oc.Embed(ctx, cfg.Embedder, []string{q.Text})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "embedder recall: ollama embed query %s: %v\n", q.ID, err)
+			return nil, 1
+		}
+		results = append(results, embedder.QueryResult{
+			QueryID:        q.ID,
+			ExpectedSource: q.ExpectedSource,
+			Hits:           embedder.TopK(qv[0], sentVecs, sents, topK),
+		})
+	}
+	embedder.ScoreResults(results)
+	return results, 0
+}
+
+// recallCandidate uploads the recall inputs to the Modal volume, invokes
+// modal_app.py::recall_embed, and parses the marker-delimited JSON the
+// remote function prints.
+func recallCandidate(queries []embedder.Query, sents []embedder.Sentence, topK int, modalBin, appPath, volume string, skipUpload bool, workDir string) ([]embedder.QueryResult, int) {
+	sentsLocal := filepath.Join(workDir, "recall-sentences.jsonl")
+	queriesLocal := filepath.Join(workDir, "recall-queries.jsonl")
+	if err := embedder.WriteRecallInputs(sentsLocal, queriesLocal, sents, queries); err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: write inputs:", err)
+		return nil, 1
+	}
+
+	if !skipUpload {
+		uploads := []struct{ local, remote string }{
+			{sentsLocal, defaultRecallRemoteDir + "/sentences.jsonl"},
+			{queriesLocal, defaultRecallRemoteDir + "/queries.jsonl"},
+		}
+		for _, u := range uploads {
+			local, remote := u.local, u.remote
+			fmt.Fprintf(os.Stderr, "uploading %s → modal-volume %s%s\n", local, volume, remote)
+			up := runner(modalBin, "volume", "put", volume, local, remote, "--force")
+			up.Stdout = os.Stdout
+			up.Stderr = os.Stderr
+			if err := up.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, "modal volume put failed:", err)
+				return nil, 1
+			}
+		}
+	}
+
+	target := fmt.Sprintf("%s::recall_embed", appPath)
+	fmt.Fprintf(os.Stderr, "modal run %s --top-k %d\n", target, topK)
+	run := runner(modalBin, "run", target, "--top-k", fmt.Sprint(topK))
+	var stdout bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = os.Stderr
+	if err := run.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "modal run recall_embed failed:", err)
+		return nil, 1
+	}
+
+	results, err := embedder.ParseRemoteRecall(stdout.Bytes(), queries)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "embedder recall: parse modal output:", err)
+		return nil, 1
+	}
+	return results, 0
 }
 
 // embedderLs invokes modal_app.py's ls entry-point to list the volume's

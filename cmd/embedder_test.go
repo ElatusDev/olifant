@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ElatusDev/olifant/internal/embedder"
 )
 
 // captureRunner records every exec.Command invocation for inspection.
@@ -180,6 +182,93 @@ func TestEmbedder_UnknownActionExitsTwo(t *testing.T) {
 	rc := Embedder([]string{"frobnicate"})
 	if rc != 2 {
 		t.Errorf("unknown action rc=%d, want 2", rc)
+	}
+}
+
+func TestEmbedderRecall_MissingQueriesFlagExitsTwo(t *testing.T) {
+	if rc := embedderRecall(nil); rc != 2 {
+		t.Errorf("rc=%d, want 2", rc)
+	}
+}
+
+func TestEmbedderRecall_UnsupportedPairExitsTwo(t *testing.T) {
+	rc := embedderRecall([]string{"--queries", "whatever.yaml", "--baseline", "bert"})
+	if rc != 2 {
+		t.Errorf("rc=%d, want 2", rc)
+	}
+}
+
+// payloadStub builds a binary that prints the given stdout payload, so
+// recallCandidate's `modal run` capture sees a marker-delimited response.
+func payloadStub(t *testing.T, payload string) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "stub.go")
+	bin := filepath.Join(dir, "stub")
+	prog := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Print(`" + payload + "`) }\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("go", "build", "-o", bin, src).CombinedOutput(); err != nil {
+		t.Fatalf("build stub: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func TestRecallCandidate_UploadsThenRunsAndParses(t *testing.T) {
+	payload := `===OLIFANT_RECALL_JSON===
+{"queries":[{"query_id":"q01","hits":[{"sentence_id":"s1","source":"a.md","score":0.9}]}]}
+===END_OLIFANT_RECALL_JSON===`
+	stub := payloadStub(t, payload)
+	cap := &captureRunner{stub: stub}
+	swapRunner(t, cap.fn)
+
+	queries := []embedder.Query{{ID: "q01", Text: "where?", ExpectedSource: "a.md"}}
+	sents := []embedder.Sentence{{ID: "s1", Text: "here", Source: "a.md"}}
+
+	results, rc := recallCandidate(queries, sents, 5, "modal", defaultModalApp, defaultVolumeName, false, t.TempDir())
+	if rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if len(cap.calls) != 3 {
+		t.Fatalf("expected 3 modal calls (2 puts + run), got %d: %v", len(cap.calls), cap.calls)
+	}
+	if cap.calls[0][2] != "put" || cap.calls[1][2] != "put" {
+		t.Errorf("first two calls not volume put: %v", cap.calls[:2])
+	}
+	if !contains(cap.calls[0], defaultRecallRemoteDir+"/sentences.jsonl") {
+		t.Errorf("call[0] missing sentences remote: %v", cap.calls[0])
+	}
+	if !contains(cap.calls[1], defaultRecallRemoteDir+"/queries.jsonl") {
+		t.Errorf("call[1] missing queries remote: %v", cap.calls[1])
+	}
+	run := cap.calls[2]
+	if run[1] != "run" || !contains(run, defaultModalApp+"::recall_embed") {
+		t.Errorf("call[2] not modal run recall_embed: %v", run)
+	}
+	if !contains(run, "--top-k") {
+		t.Errorf("call[2] missing --top-k: %v", run)
+	}
+	if len(results) != 1 || results[0].HitAt != 1 {
+		t.Errorf("results = %+v", results)
+	}
+}
+
+func TestRecallCandidate_SkipUploadRunsOnly(t *testing.T) {
+	payload := `===OLIFANT_RECALL_JSON===
+{"queries":[{"query_id":"q01","hits":[]}]}
+===END_OLIFANT_RECALL_JSON===`
+	stub := payloadStub(t, payload)
+	cap := &captureRunner{stub: stub}
+	swapRunner(t, cap.fn)
+
+	queries := []embedder.Query{{ID: "q01", Text: "where?", ExpectedSource: "a.md"}}
+	_, rc := recallCandidate(queries, nil, 5, "modal", defaultModalApp, defaultVolumeName, true, t.TempDir())
+	if rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if len(cap.calls) != 1 || cap.calls[0][1] != "run" {
+		t.Errorf("expected single modal run, got: %v", cap.calls)
 	}
 }
 

@@ -17,6 +17,9 @@ Entry points (invoked via `modal run internal/embedder/modal_app.py::<name>`):
   train_full   — real run (~30-60 min on A10G, ~$1-3)
   dry_run      — smoke on 100 examples (~3 min, ~$0.10)
   ls           — list /data/embedders/v1/ contents (no GPU; debug)
+  inspect      — server-side model validation (manifest, NaN, triplet acc)
+  recall_embed — B1c: embed corpus sentences + recall queries with the
+                 trained model, print per-query top-K hits as marked JSON
 """
 
 import modal
@@ -26,6 +29,8 @@ VOLUME_NAME = "olifant-train-v1"
 
 BASE_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 TRIPLES_PATH = "/data/embedder-v1/triples.jsonl"
+RECALL_SENTENCES_PATH = "/data/embedder-v1/recall/sentences.jsonl"
+RECALL_QUERIES_PATH = "/data/embedder-v1/recall/queries.jsonl"
 MODEL_OUT_DIR = "/data/embedders/v1/model"
 MANIFEST_PATH = "/data/embedders/v1/manifest.yaml"
 LOSS_LOG_PATH = "/data/embedders/v1/loss-log.csv"
@@ -251,3 +256,59 @@ def inspect():
     print(f"mean cos(anchor, positive):  {float(sim_pos.mean()):.4f}")
     print(f"mean cos(anchor, negative):  {float(sim_neg.mean()):.4f}")
     print(f"held-out triplet accuracy:   {acc:.4f}  (cos(a,p) > cos(a,n); ~0.5 = broken/random)")
+
+
+@app.function(gpu=GPU, image=train_image, volumes={"/data": volume}, timeout=15 * 60)
+def recall_embed(top_k: int = 10):
+    """B1c candidate-side retrieval: embed every corpus sentence and every
+    recall query with the trained model, rank sentences per query by cosine,
+    and print the top-K hits as marker-delimited JSON for the Go side to
+    parse (stdout is the only artefact channel — `modal volume get` is
+    blocked locally by the corp TLS-interception cert)."""
+    import json
+
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+
+    def load_jsonl(path):
+        with open(path) as f:
+            return [json.loads(ln) for ln in f if ln.strip()]
+
+    sentences = load_jsonl(RECALL_SENTENCES_PATH)
+    queries = load_jsonl(RECALL_QUERIES_PATH)
+    if not sentences or not queries:
+        raise RuntimeError(
+            f"empty inputs: {len(sentences)} sentences, {len(queries)} queries"
+        )
+    print(f"recall_embed: {len(sentences)} sentences, {len(queries)} queries, top_k={top_k}")
+
+    model = SentenceTransformer(MODEL_OUT_DIR, trust_remote_code=True)
+    model.max_seq_length = MAX_SEQ_LEN
+
+    enc = lambda xs: model.encode(
+        xs, normalize_embeddings=True, batch_size=128, show_progress_bar=False
+    )
+    sv = enc([s["text"] for s in sentences])
+    qv = enc([q["text"] for q in queries])
+
+    nan_rows = int(np.isnan(sv).any(axis=1).sum() + np.isnan(qv).any(axis=1).sum())
+    if nan_rows:
+        raise RuntimeError(f"{nan_rows} NaN embedding rows — model artefact broken")
+
+    sims = qv @ sv.T  # normalized → dot product == cosine
+    out = []
+    for qi, q in enumerate(queries):
+        order = np.argsort(-sims[qi])[:top_k]
+        hits = [
+            {
+                "sentence_id": sentences[si]["id"],
+                "source": sentences[si]["source"],
+                "score": float(sims[qi][si]),
+            }
+            for si in order
+        ]
+        out.append({"query_id": q["id"], "hits": hits})
+
+    print("===OLIFANT_RECALL_JSON===")
+    print(json.dumps({"queries": out}))
+    print("===END_OLIFANT_RECALL_JSON===")
