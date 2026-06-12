@@ -14,6 +14,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/chroma"
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/synth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,6 +49,11 @@ type Config struct {
 	// field is filtered via Chroma `where` ($in over Scopes ∪ universal).
 	// Phase A2 of olifant-rag-pivot-workflow.md.
 	V2Collection string
+
+	// Synth overrides the synthesizer backend. Nil = local Ollama at
+	// OllamaURL (the default until the F4 Promote gate). Embedding always
+	// goes through Ollama regardless.
+	Synth synth.Client
 }
 
 // Result is the final emitted artifact.
@@ -153,16 +159,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	scopeForSchema := scopes
 	dynamicSchema := BuildChallengeSchema(cfg.Validator, scopeForSchema)
 
-	gen := func(promptText string) (*ollama.GenerateResponse, error) {
-		return oc.Generate(ctx, ollama.GenerateRequest{
-			Model:  cfg.Synthesizer,
-			System: systemPrompt,
-			Prompt: promptText,
-			Format: dynamicSchema,
-			Options: map[string]interface{}{
-				"temperature": cfg.Temperature,
-				"num_predict": cfg.MaxTokens,
-			},
+	sc := cfg.Synth
+	if sc == nil {
+		sc = synth.NewOllama(cfg.OllamaURL)
+	}
+	gen := func(promptText string) (*synth.Response, error) {
+		return sc.Generate(ctx, synth.Request{
+			Model:       cfg.Synthesizer,
+			System:      systemPrompt,
+			Prompt:      promptText,
+			Schema:      dynamicSchema,
+			Temperature: cfg.Temperature,
+			MaxTokens:   cfg.MaxTokens,
 		})
 	}
 
@@ -176,7 +184,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	totalEvalDuration := resp.EvalDuration
 	var lastViolations []Violation
 	if cfg.Validator != nil {
-		violations, vErr := cfg.Validator.Validate(resp.Response)
+		violations, vErr := cfg.Validator.Validate(resp.Text)
 		if vErr != nil && cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  validator parse error: %v\n", vErr)
 		}
@@ -206,7 +214,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			totalEvalCount += retryResp.EvalCount
 			totalEvalDuration += retryResp.EvalDuration
 			resp = retryResp
-			violations, _ = cfg.Validator.Validate(resp.Response)
+			violations, _ = cfg.Validator.Validate(resp.Text)
 			lastViolations = violations
 			if !HasBlockers(violations) {
 				break
@@ -216,7 +224,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	synthMs := time.Since(synthStart).Milliseconds()
 
 	// Convert JSON output to YAML for display continuity.
-	yamlOut, jsonValid := jsonToYAML(resp.Response)
+	yamlOut, jsonValid := jsonToYAML(resp.Text)
 
 	// Build a synthetic GenerateResponse-like view for tokens/sec across all attempts.
 	tokensPerSec := 0.0
@@ -236,7 +244,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		RequestText:             cfg.Request,
 		RetrievedCount:          len(hits),
 		RetrievedSources:        sourcePaths,
-		RawJSON:                 strings.TrimSpace(resp.Response),
+		RawJSON:                 strings.TrimSpace(resp.Text),
 		YAMLOutput:              yamlOut,
 		JSONValid:               jsonValid,
 		Elapsed:                 time.Since(start),

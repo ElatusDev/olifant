@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/synth"
 )
 
 // getEnvDebugPath returns the OLIFANT_PROMPT_DEBUG path if set. When non-
@@ -31,6 +32,10 @@ type synthConfig struct {
 	Synthesizer string
 	Temperature float64
 	MaxTokens   int
+
+	// Client overrides the synthesizer backend. Nil = local Ollama at
+	// OllamaURL (the default until the F4 Promote gate).
+	Client synth.Client
 }
 
 // synthResult captures the raw model output plus timing.
@@ -58,29 +63,29 @@ func synthesize(ctx context.Context, cfg synthConfig, goal string, hits []Hit) (
 	if cfg.Temperature < 0 {
 		cfg.Temperature = 0
 	}
-	oc := ollama.New(cfg.OllamaURL)
+	client := cfg.Client
+	if client == nil {
+		client = synth.NewOllama(cfg.OllamaURL)
+	}
 
-	prompt := buildPromptText(goal, hits)
-	req := ollama.GenerateRequest{
-		Model:  cfg.Synthesizer,
-		System: systemPrompt,
-		Prompt: prompt,
-		Format: planSynthSchema(),
-		Options: map[string]interface{}{
-			"temperature": cfg.Temperature,
-			"num_predict": cfg.MaxTokens,
-		},
+	req := synth.Request{
+		Model:       cfg.Synthesizer,
+		System:      systemPrompt,
+		Prompt:      buildPromptText(goal, hits),
+		Schema:      planSynthSchema(),
+		Temperature: cfg.Temperature,
+		MaxTokens:   cfg.MaxTokens,
 	}
 	if dbg := getEnvDebugPath(); dbg != "" {
-		dumpRequest(dbg, req)
+		dumpRequest(dbg, synth.ToOllamaRequest(req))
 	}
 	start := time.Now()
-	resp, err := oc.Generate(ctx, req)
+	resp, err := client.Generate(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("synthesize: %w", err)
 	}
 	return &synthResult{
-		RawJSON:      strings.TrimSpace(resp.Response),
+		RawJSON:      strings.TrimSpace(resp.Text),
 		EvalCount:    resp.EvalCount,
 		EvalDuration: resp.EvalDuration,
 		ElapsedMs:    time.Since(start).Milliseconds(),
