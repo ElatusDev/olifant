@@ -27,9 +27,8 @@ func TestFromRuntimeOllamaDefault(t *testing.T) {
 func TestFromRuntimeClaude(t *testing.T) {
 	bin := fakeClaudeBinary(t, `{}`, 0, "")
 	t.Setenv("OLIFANT_CLAUDE_BINARY", bin)
-	t.Setenv("OLIFANT_CLAUDE_MODEL", "claude-fable-5")
 
-	client, model, err := FromRuntime(config.Runtime{SynthBackend: "claude"})
+	client, model, err := FromRuntime(config.Runtime{SynthBackend: "claude", SynthClaudeModel: "claude-fable-5"})
 	if err != nil {
 		t.Fatalf("FromRuntime: %v", err)
 	}
@@ -37,7 +36,23 @@ func TestFromRuntimeClaude(t *testing.T) {
 		t.Fatalf("expected *Claude, got %T", client)
 	}
 	if model != "claude-fable-5" {
-		t.Fatalf("model = %q, want claude-fable-5", model)
+		t.Fatalf("model = %q, want claude-fable-5 (rt.SynthClaudeModel pin)", model)
+	}
+}
+
+func TestFromRuntimeClaudeModelFallback(t *testing.T) {
+	bin := fakeClaudeBinary(t, `{}`, 0, "")
+	t.Setenv("OLIFANT_CLAUDE_BINARY", bin)
+	t.Setenv("OLIFANT_CLAUDE_MODEL", "claude-sonnet-4-6")
+
+	// Zero-value SynthClaudeModel (caller bypassed config.Resolve) falls
+	// back to the PSP executor's model rather than an empty --model.
+	_, model, err := FromRuntime(config.Runtime{SynthBackend: "claude"})
+	if err != nil {
+		t.Fatalf("FromRuntime: %v", err)
+	}
+	if model != "claude-sonnet-4-6" {
+		t.Fatalf("model = %q, want claude-sonnet-4-6 fallback", model)
 	}
 }
 
