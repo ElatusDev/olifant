@@ -54,6 +54,7 @@ func evalGate(args []string) int {
 	maxBlockers := fs.Int("max-blockers", 0, "maximum total BLOCKERs (D-EG1)")
 	verbose := fs.Bool("v", false, "verbose progress")
 	timeoutSec := fs.Int("timeout", 3600, "overall timeout in seconds")
+	notify := fs.Bool("notify", false, "nightly mode: append to drift.log; macOS notification on FAIL (D-EG5)")
 	_ = fs.Parse(args)
 
 	kbRoot, platformRoot := "", ""
@@ -95,6 +96,9 @@ func evalGate(args []string) int {
 			skipped.Verdict = "SKIPPED"
 			skipped.OverrideReason = reason
 			_ = eval.WriteReceipt("", logPath, skipped)
+			if *notify {
+				driftLog("SKIPPED", reason)
+			}
 			return gateExitSkipped
 		}
 		suite, lerr := eval.LoadSuite(*suitePath)
@@ -152,6 +156,13 @@ func evalGate(args []string) int {
 
 	fmt.Printf("eval gate %s — clean %d/%d, BLOCKERs %d (thresholds: clean ≥ %d, B ≤ %d)\n",
 		receipt.Verdict, report.CleanCases, report.TotalCases, report.TotalBlockers, *minClean, *maxBlockers)
+	if *notify {
+		summary := fmt.Sprintf("clean=%d/%d B=%d run=%s", report.CleanCases, report.TotalCases, report.TotalBlockers, report.RunID)
+		driftLog(receipt.Verdict, summary)
+		if !verdict.Pass {
+			notifyMac("olifant eval gate", "FAIL — "+summary)
+		}
+	}
 	if !verdict.Pass {
 		for _, r := range verdict.Reasons {
 			fmt.Println("  FAIL:", r)
@@ -161,6 +172,31 @@ func evalGate(args []string) int {
 		return gateExitFail
 	}
 	return gateExitPass
+}
+
+// driftLog appends a three-state (PASS/FAIL/SKIPPED) line to the nightly
+// drift log (D-EG5).
+func driftLog(state, detail string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(home, ".olifant", "eval-gate", "drift.log")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s %s %s\n", time.Now().UTC().Format(time.RFC3339), state, detail)
+}
+
+// notifyMac raises a macOS user notification; best-effort.
+func notifyMac(title, message string) {
+	script := fmt.Sprintf("display notification %q with title %q", message, title)
+	_ = exec.Command("osascript", "-e", script).Run()
 }
 
 // evalGateCheck verifies a fresh PASS receipt exists for the current HEAD +
