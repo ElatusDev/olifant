@@ -125,7 +125,22 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 
-	// 2. Build prompt + schema
+	// 2. Build prompt + schema. Rewrite KB-relative source breadcrumbs to
+	//    their validator-resolvable knowledge-base/-prefixed form before
+	//    the model sees them (mirrors challenge.normalizeHitProvenance).
+	if cfg.Validator != nil {
+		for _, h := range hits {
+			for _, key := range []string{"source", "source_anchor"} {
+				s, _ := h.Meta[key].(string)
+				if s == "" || cfg.Validator.Resolves(s) {
+					continue
+				}
+				if kb := "knowledge-base/" + s; cfg.Validator.Resolves(kb) {
+					h.Meta[key] = kb
+				}
+			}
+		}
+	}
 	prompt := buildPrompt(cfg.Claim, cfg.Diff, hits)
 	dynamicSchema := BuildValidateSchema(cfg.Validator, cfg.Scopes)
 

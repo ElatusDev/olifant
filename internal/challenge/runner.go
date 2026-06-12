@@ -135,7 +135,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 
-	// 3. Build prompt
+	// 3. Build prompt. KB-derived chunks carry KB-relative source
+	//    breadcrumbs (CORPUS-V1); rewrite them to the validator-resolvable
+	//    knowledge-base/-prefixed form BEFORE the model sees them, so a
+	//    verbatim echo of a breadcrumb is never a cite_unresolved BLOCKER.
+	normalizeHitProvenance(cfg.Validator, hits)
 	prompt := buildChallengePrompt(cfg.Request, hits)
 
 	// 4. Synthesize — Ollama's `format` field is set to a JSON Schema so the
@@ -354,6 +358,26 @@ type retrievedHit struct {
 	Meta     map[string]interface{}
 	Distance float32
 	Scope    string
+}
+
+// normalizeHitProvenance rewrites source/source_anchor breadcrumbs that the
+// validator cannot resolve as-is into their knowledge-base/-prefixed form
+// when that form resolves. No-op when the validator is nil.
+func normalizeHitProvenance(v *CiteValidator, hits []retrievedHit) {
+	if v == nil {
+		return
+	}
+	for _, h := range hits {
+		for _, key := range []string{"source", "source_anchor"} {
+			s, _ := h.Meta[key].(string)
+			if s == "" || v.Resolves(s) {
+				continue
+			}
+			if kb := "knowledge-base/" + s; v.Resolves(kb) {
+				h.Meta[key] = kb
+			}
+		}
+	}
 }
 
 func buildChallengePrompt(request string, hits []retrievedHit) string {
