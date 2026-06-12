@@ -20,7 +20,13 @@ func FromRuntime(rt config.Runtime) (Client, string, error) {
 		if !ok {
 			return nil, "", fmt.Errorf("OLIFANT_SYNTH_BACKEND=claude but the claude binary is not on PATH (set OLIFANT_CLAUDE_BINARY or install the CLI)")
 		}
-		return NewClaude(cc.Binary, cc.Effort, cc.Timeout), cc.Model, nil
+		// Timeout 0: synthesis defers to the caller's context deadline
+		// (eval case budget, CLI --timeout). OLIFANT_CLAUDE_TIMEOUT's
+		// 120 s default is sized for short PSP steps; layering it under
+		// the case budget killed long-tail synth calls outright instead
+		// of letting them finish (F4.4 iteration finding — case 4,
+		// `signal: killed` at attempts=0 with 120 s of budget left).
+		return NewClaude(cc.Binary, cc.Effort, 0), cc.Model, nil
 	default:
 		return nil, "", fmt.Errorf("unknown OLIFANT_SYNTH_BACKEND %q (want ollama or claude)", rt.SynthBackend)
 	}
