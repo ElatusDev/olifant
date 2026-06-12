@@ -158,3 +158,22 @@ func TestFileSHA256(t *testing.T) {
 		t.Fatalf("missing file should hash to empty, got %q, %v", h2, err)
 	}
 }
+
+func TestGateFirstTryFloor(t *testing.T) {
+	healthy := rpt(12, 0, CaseResult{CaseID: "c1"})
+	healthy.FirstTryPassRate = 0.92
+	regressed := rpt(12, 0, CaseResult{CaseID: "c1"})
+	regressed.FirstTryPassRate = 0.50
+
+	cfg := GateConfig{MinClean: 11, MaxBlockers: 0, MinFirstTry: 0.70}
+	if v := Gate(healthy, nil, cfg); !v.Pass {
+		t.Fatalf("healthy run failed first-try floor: %v", v.Reasons)
+	}
+	if v := Gate(regressed, nil, cfg); v.Pass || !strings.Contains(strings.Join(v.Reasons, " "), "first-try") {
+		t.Fatalf("retry-masked regression not caught: pass=%v reasons=%v", v.Pass, v.Reasons)
+	}
+	// 0 disables the floor (e.g. judging legacy qwen-era reports).
+	if v := Gate(regressed, nil, GateConfig{MinClean: 11}); !v.Pass {
+		t.Fatalf("disabled floor should pass: %v", v.Reasons)
+	}
+}

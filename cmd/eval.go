@@ -52,6 +52,7 @@ func evalGate(args []string) int {
 	baselineDir := fs.String("baseline", "", "baseline run dir (default: run dir of the newest PASS receipt)")
 	minClean := fs.Int("min-clean", 11, "minimum clean cases (D-EG1)")
 	maxBlockers := fs.Int("max-blockers", 0, "maximum total BLOCKERs (D-EG1)")
+	minFirstTry := fs.Float64("min-first-try", 0.70, "minimum first-try pass rate 0..1; 0 disables (D-EG1 E4 amendment)")
 	verbose := fs.Bool("v", false, "verbose progress")
 	timeoutSec := fs.Int("timeout", 3600, "overall timeout in seconds")
 	notify := fs.Bool("notify", false, "nightly mode: append to drift.log; macOS notification on FAIL (D-EG5)")
@@ -137,7 +138,7 @@ func evalGate(args []string) int {
 		}
 	}
 
-	verdict := eval.Gate(report, baseline, eval.GateConfig{MinClean: *minClean, MaxBlockers: *maxBlockers})
+	verdict := eval.Gate(report, baseline, eval.GateConfig{MinClean: *minClean, MaxBlockers: *maxBlockers, MinFirstTry: *minFirstTry})
 
 	receipt := base
 	receipt.RunID = report.RunID

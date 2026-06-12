@@ -18,10 +18,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// GateConfig holds the count thresholds (D-EG1).
+// GateConfig holds the count thresholds (D-EG1, amended at E4: a first-try
+// floor catches retry-masked regressions — count-invisible bugs like AP103
+// halve the first-try rate while retries keep final counts pristine).
 type GateConfig struct {
-	MinClean    int // minimum clean cases (default 11 of 12)
-	MaxBlockers int // maximum total BLOCKERs (default 0)
+	MinClean    int     // minimum clean cases (default 11 of 12)
+	MaxBlockers int     // maximum total BLOCKERs (default 0)
+	MinFirstTry float64 // minimum first-try pass rate, 0..1 (0 disables; default 0.70)
 }
 
 // GateVerdict is the outcome of judging one report.
@@ -42,6 +45,11 @@ func Gate(report, baseline *Report, cfg GateConfig) GateVerdict {
 	if report.TotalBlockers > cfg.MaxBlockers {
 		v.Reasons = append(v.Reasons,
 			fmt.Sprintf("total BLOCKERs %d above threshold %d", report.TotalBlockers, cfg.MaxBlockers))
+	}
+	if cfg.MinFirstTry > 0 && report.FirstTryPassRate < cfg.MinFirstTry {
+		v.Reasons = append(v.Reasons,
+			fmt.Sprintf("first-try pass rate %.0f%% below threshold %.0f%% (retry-masked regression — see AP103)",
+				report.FirstTryPassRate*100, cfg.MinFirstTry*100))
 	}
 	for _, c := range report.Cases {
 		if c.Error != "" {
