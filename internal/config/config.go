@@ -16,6 +16,7 @@ import (
 //	OLIFANT_CHROMA_URL        e.g., http://localhost:8000 (default — assumes port-forward)
 //	OLIFANT_EMBEDDER          default: nomic-embed-text
 //	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
+//	OLIFANT_SYNTH_BACKEND     default: ollama (values: ollama | claude)
 //	OLIFANT_CHROMA_TENANT     default: default_tenant
 //	OLIFANT_CHROMA_DATABASE   default: default_database
 type Runtime struct {
@@ -23,6 +24,7 @@ type Runtime struct {
 	ChromaURL      string
 	Embedder       string
 	Synthesizer    string
+	SynthBackend   string
 	ChromaTenant   string
 	ChromaDatabase string
 }
@@ -34,6 +36,7 @@ func Resolve() Runtime {
 		ChromaURL:      env("OLIFANT_CHROMA_URL", "http://localhost:8000"),
 		Embedder:       env("OLIFANT_EMBEDDER", "nomic-embed-text"),
 		Synthesizer:    env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
+		SynthBackend:   env("OLIFANT_SYNTH_BACKEND", "ollama"),
 		ChromaTenant:   env("OLIFANT_CHROMA_TENANT", "default_tenant"),
 		ChromaDatabase: env("OLIFANT_CHROMA_DATABASE", "default_database"),
 	}
@@ -44,8 +47,8 @@ func Resolve() Runtime {
 
 // String dumps non-secret config for logging.
 func (r Runtime) String() string {
-	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s tenant=%s/db=%s",
-		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.ChromaTenant, r.ChromaDatabase)
+	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s",
+		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase)
 }
 
 func env(key, def string) string {

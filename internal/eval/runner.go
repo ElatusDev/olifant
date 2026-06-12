@@ -10,6 +10,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/config"
+	synthlib "github.com/ElatusDev/olifant/internal/synth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,6 +59,10 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 
 	// Resolve runtime endpoints + validator once.
 	rt := config.Resolve()
+	sc, defaultSynth, scErr := synthlib.FromRuntime(rt)
+	if scErr != nil {
+		return nil, scErr
+	}
 	validator, vErr := challenge.NewCiteValidator(cfg.PlatformRoot, cfg.KBRoot)
 	if vErr != nil {
 		fmt.Fprintf(os.Stderr, "eval: validator init failed (%v) — proceeding without\n", vErr)
@@ -89,7 +94,7 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 		topN := pickInt(c.TopN, cfg.Suite.Default.TopN, 6)
 		maxTokens := pickInt(c.MaxTokens, cfg.Suite.Default.MaxTokens, 700)
 		timeoutSec := pickInt(c.TimeoutSec, cfg.Suite.Default.TimeoutSec, 240)
-		synth := pickStr(c.Synth, cfg.Suite.Default.Synth, rt.Synthesizer)
+		synth := pickStr(c.Synth, cfg.Suite.Default.Synth, defaultSynth)
 
 		// Build request: either --file content or literal request
 		request, rerr := buildRequestForCase(c, cfg.PlatformRoot)
@@ -114,6 +119,7 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 			ChromaURL:          rt.ChromaURL,
 			Embedder:           rt.Embedder,
 			Synthesizer:        synth,
+			Synth:              sc,
 			Tenant:             rt.ChromaTenant,
 			Database:           rt.ChromaDatabase,
 			Scopes:             c.Scope,

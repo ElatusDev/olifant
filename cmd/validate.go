@@ -12,6 +12,7 @@ import (
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/config"
 	"github.com/ElatusDev/olifant/internal/shortterm"
+	synthlib "github.com/ElatusDev/olifant/internal/synth"
 	"github.com/ElatusDev/olifant/internal/validate"
 )
 
@@ -76,7 +77,11 @@ func Validate(args []string) int {
 	}
 
 	rt := config.Resolve()
-	synthesizer := rt.Synthesizer
+	sc, synthesizer, scErr := synthlib.FromRuntime(rt)
+	if scErr != nil {
+		fmt.Fprintln(os.Stderr, scErr)
+		return 2
+	}
 	if *synth != "" {
 		synthesizer = *synth
 	}
@@ -134,6 +139,7 @@ func Validate(args []string) int {
 		ChromaURL:          rt.ChromaURL,
 		Embedder:           rt.Embedder,
 		Synthesizer:        synthesizer,
+		Synth:              sc,
 		Tenant:             rt.ChromaTenant,
 		Database:           rt.ChromaDatabase,
 		Scopes:             scopeList,
