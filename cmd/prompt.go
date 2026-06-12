@@ -12,6 +12,7 @@ import (
 	"github.com/ElatusDev/olifant/internal/config"
 	"github.com/ElatusDev/olifant/internal/prompt"
 	"github.com/ElatusDev/olifant/internal/shortterm"
+	synthlib "github.com/ElatusDev/olifant/internal/synth"
 )
 
 // Prompt dispatches `olifant prompt <build|...>`.
@@ -55,7 +56,11 @@ func promptBuild(args []string) int {
 	}
 
 	rt := config.Resolve()
-	synthesizer := rt.Synthesizer
+	sc, synthesizer, scErr := synthlib.FromRuntime(rt)
+	if scErr != nil {
+		fmt.Fprintln(os.Stderr, scErr)
+		return 2
+	}
 	if *synth != "" {
 		synthesizer = *synth
 	}
@@ -85,6 +90,7 @@ func promptBuild(args []string) int {
 		ChromaURL:   rt.ChromaURL,
 		Embedder:    rt.Embedder,
 		Synthesizer: synthesizer,
+		Synth:       sc,
 		Tenant:      rt.ChromaTenant,
 		Database:    rt.ChromaDatabase,
 		Scopes:      scopeList,

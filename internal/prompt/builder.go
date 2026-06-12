@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/psp"
+	"github.com/ElatusDev/olifant/internal/synth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,6 +39,10 @@ type Config struct {
 	MaxTokens   int      // default 4096 — plans need more room than challenge
 	OutDir      string   // default "plans"
 	Verbose     bool
+
+	// Synth overrides the synthesizer backend. Nil = local Ollama at
+	// OllamaURL (the default until the F4 Promote gate).
+	Synth synth.Client
 }
 
 // Result is the outcome of one Build call.
@@ -94,6 +99,7 @@ func Build(ctx context.Context, cfg Config) (*Result, error) {
 		Synthesizer: cfg.Synthesizer,
 		Temperature: cfg.Temperature,
 		MaxTokens:   cfg.MaxTokens,
+		Client:      cfg.Synth,
 	}, cfg.Goal, hits)
 	if err != nil {
 		return nil, err

@@ -16,26 +16,32 @@ import (
 //	OLIFANT_CHROMA_URL        e.g., http://localhost:8000 (default — assumes port-forward)
 //	OLIFANT_EMBEDDER          default: nomic-embed-text
 //	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
+//	OLIFANT_SYNTH_BACKEND     default: claude (values: ollama | claude) — flipped at F4 Promote (gate GF4 PASS 2026-06-12); ollama remains the offline fallback
+//	OLIFANT_SYNTH_CLAUDE_MODEL default: claude-fable-5 — the model that passed gate GF4; separate from OLIFANT_CLAUDE_MODEL (PSP executor)
 //	OLIFANT_CHROMA_TENANT     default: default_tenant
 //	OLIFANT_CHROMA_DATABASE   default: default_database
 type Runtime struct {
-	OllamaURL      string
-	ChromaURL      string
-	Embedder       string
-	Synthesizer    string
-	ChromaTenant   string
-	ChromaDatabase string
+	OllamaURL        string
+	ChromaURL        string
+	Embedder         string
+	Synthesizer      string
+	SynthBackend     string
+	SynthClaudeModel string
+	ChromaTenant     string
+	ChromaDatabase   string
 }
 
 // Resolve returns runtime config with env-var overrides applied.
 func Resolve() Runtime {
 	r := Runtime{
-		OllamaURL:      env("OLIFANT_OLLAMA_URL", "http://100.94.233.106:11434"),
-		ChromaURL:      env("OLIFANT_CHROMA_URL", "http://localhost:8000"),
-		Embedder:       env("OLIFANT_EMBEDDER", "nomic-embed-text"),
-		Synthesizer:    env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
-		ChromaTenant:   env("OLIFANT_CHROMA_TENANT", "default_tenant"),
-		ChromaDatabase: env("OLIFANT_CHROMA_DATABASE", "default_database"),
+		OllamaURL:        env("OLIFANT_OLLAMA_URL", "http://100.94.233.106:11434"),
+		ChromaURL:        env("OLIFANT_CHROMA_URL", "http://localhost:8000"),
+		Embedder:         env("OLIFANT_EMBEDDER", "nomic-embed-text"),
+		Synthesizer:      env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
+		SynthBackend:     env("OLIFANT_SYNTH_BACKEND", "claude"),
+		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", "claude-fable-5"),
+		ChromaTenant:     env("OLIFANT_CHROMA_TENANT", "default_tenant"),
+		ChromaDatabase:   env("OLIFANT_CHROMA_DATABASE", "default_database"),
 	}
 	r.OllamaURL = strings.TrimRight(r.OllamaURL, "/")
 	r.ChromaURL = strings.TrimRight(r.ChromaURL, "/")
@@ -44,8 +50,8 @@ func Resolve() Runtime {
 
 // String dumps non-secret config for logging.
 func (r Runtime) String() string {
-	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s tenant=%s/db=%s",
-		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.ChromaTenant, r.ChromaDatabase)
+	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s",
+		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase)
 }
 
 func env(key, def string) string {

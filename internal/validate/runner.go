@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/challenge"
-	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/synth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,6 +37,11 @@ type Config struct {
 	// MaxValidateRetries — additional synth attempts on weak assessments.
 	// 0 = no retry. Default when Validator is set: 1.
 	MaxValidateRetries int
+
+	// Synth overrides the synthesizer backend. Nil = local Ollama at
+	// OllamaURL (the default until the F4 Promote gate). Retrieval
+	// embedding always goes through Ollama regardless.
+	Synth synth.Client
 }
 
 // defaultMaxTokens is the synthesizer num_predict default. 1024 was too
@@ -120,21 +125,25 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 
-	// 2. Build prompt + schema
+	// 2. Build prompt + schema. Rewrite KB-relative source breadcrumbs to
+	//    their validator-resolvable knowledge-base/-prefixed form before
+	//    the model sees them (mirrors challenge.normalizeHitProvenance).
+	normalizeHitProvenance(cfg.Validator, hits)
 	prompt := buildPrompt(cfg.Claim, cfg.Diff, hits)
 	dynamicSchema := BuildValidateSchema(cfg.Validator, cfg.Scopes)
 
-	oc := ollama.New(cfg.OllamaURL)
-	gen := func(promptText string) (*ollama.GenerateResponse, error) {
-		return oc.Generate(ctx, ollama.GenerateRequest{
-			Model:  cfg.Synthesizer,
-			System: systemPrompt,
-			Prompt: promptText,
-			Format: dynamicSchema,
-			Options: map[string]interface{}{
-				"temperature": cfg.Temperature,
-				"num_predict": cfg.MaxTokens,
-			},
+	sc := cfg.Synth
+	if sc == nil {
+		sc = synth.NewOllama(cfg.OllamaURL)
+	}
+	gen := func(promptText string) (*synth.Response, error) {
+		return sc.Generate(ctx, synth.Request{
+			Model:       cfg.Synthesizer,
+			System:      systemPrompt,
+			Prompt:      promptText,
+			Schema:      dynamicSchema,
+			Temperature: cfg.Temperature,
+			MaxTokens:   cfg.MaxTokens,
 		})
 	}
 
@@ -160,7 +169,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	var lastViolations []challenge.Violation
 
 	if cfg.Validator != nil {
-		violations, vErr := av.Validate(resp.Response)
+		violations, vErr := av.Validate(resp.Text)
 		if vErr != nil && cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  assessment-validator parse error: %v\n", vErr)
 		}
@@ -190,7 +199,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			totalEvalCount += retryResp.EvalCount
 			totalEvalDuration += retryResp.EvalDuration
 			resp = retryResp
-			violations, _ = av.Validate(resp.Response)
+			violations, _ = av.Validate(resp.Text)
 			lastViolations = violations
 			if !challenge.HasBlockers(violations) {
 				break
@@ -199,7 +208,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	synthMs := time.Since(synthStart).Milliseconds()
 
-	yamlOut, jsonValid := jsonToYAML(resp.Response)
+	yamlOut, jsonValid := jsonToYAML(resp.Text)
 
 	tokensPerSec := 0.0
 	if totalEvalDuration > 0 && totalEvalCount > 0 {
@@ -214,7 +223,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 
 	return &Result{
-		RawJSON:             strings.TrimSpace(resp.Response),
+		RawJSON:             strings.TrimSpace(resp.Text),
 		YAMLOutput:          yamlOut,
 		JSONValid:           jsonValid,
 		RetrievedCount:      len(hits),
@@ -228,6 +237,26 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		ValidateAttempts:    attempts,
 		RemainingViolations: lastViolations,
 	}, nil
+}
+
+// normalizeHitProvenance rewrites source/source_anchor breadcrumbs that the
+// validator cannot resolve as-is into their knowledge-base/-prefixed form
+// when that form resolves. No-op when the validator is nil.
+func normalizeHitProvenance(v *challenge.CiteValidator, hits []RetrievedHit) {
+	if v == nil {
+		return
+	}
+	for _, h := range hits {
+		for _, key := range []string{"source", "source_anchor"} {
+			s, _ := h.Meta[key].(string)
+			if s == "" || v.Resolves(s) {
+				continue
+			}
+			if kb := "knowledge-base/" + s; v.Resolves(kb) {
+				h.Meta[key] = kb
+			}
+		}
+	}
 }
 
 // ExtractVerdict returns (overall_verdict, proceed) parsed from RawJSON.
