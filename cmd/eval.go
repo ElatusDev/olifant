@@ -27,6 +27,8 @@ func Eval(args []string) int {
 		return evalRun(rest)
 	case "gate":
 		return evalGate(rest)
+	case "gate-check":
+		return evalGateCheck(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant eval: unknown action %q\n", action)
 		return 2
@@ -158,6 +160,60 @@ func evalGate(args []string) int {
 		fmt.Print(eval.DiffTable(report, baseline))
 		return gateExitFail
 	}
+	return gateExitPass
+}
+
+// evalGateCheck verifies a fresh PASS receipt exists for the current HEAD +
+// suite + corpus fingerprints (the pre-push hook's fast path, D-EG2). Exit 0
+// = fresh receipt (or audited override); exit 1 = stale/missing.
+func evalGateCheck(args []string) int {
+	fs := flag.NewFlagSet("eval gate-check", flag.ExitOnError)
+	suitePath := fs.String("suite", "", "suite YAML (default: <kb-root>/eval/suites/code-feeding-v2.yaml)")
+	_ = fs.Parse(args)
+
+	kbRoot := ""
+	if found, ok := findUp("knowledge-base/README.md"); ok {
+		kbRoot = filepath.Dir(found)
+	}
+	if kbRoot == "" {
+		fmt.Fprintln(os.Stderr, "olifant eval gate-check: kb-root not found")
+		return gateExitUsage
+	}
+	if *suitePath == "" {
+		*suitePath = filepath.Join(kbRoot, "eval", "suites", "code-feeding-v2.yaml")
+	}
+	suiteSHA, err := eval.FileSHA256(*suitePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "olifant eval gate-check: suite fingerprint:", err)
+		return gateExitUsage
+	}
+	corpusSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
+	gitSHA := headSHA()
+	logPath := receiptsLogPath()
+
+	// Audited override (D-EG4): the only sanctioned bypass.
+	if reason := os.Getenv("OLIFANT_EVAL_GATE_SKIP"); reason != "" {
+		_ = eval.WriteReceipt("", logPath, eval.Receipt{
+			Verdict: "OVERRIDE", GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA,
+			OverrideReason: reason, Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		fmt.Printf("eval gate-check OVERRIDE (audited): %s\n", reason)
+		return gateExitPass
+	}
+
+	rec, err := eval.LatestReceipt(logPath, eval.Receipt{
+		Verdict: "PASS", GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "olifant eval gate-check: read receipts:", err)
+		return gateExitUsage
+	}
+	if rec == nil {
+		fmt.Printf("eval gate-check STALE: no PASS receipt for HEAD %.12s with current suite+corpus fingerprints\n", gitSHA)
+		return gateExitFail
+	}
+	fmt.Printf("eval gate-check FRESH: run %s (clean %d/%d, B %d)\n",
+		rec.RunID, rec.CleanCases, rec.TotalCases, rec.TotalBlockers)
 	return gateExitPass
 }
 

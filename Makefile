@@ -1,7 +1,7 @@
 BIN ?= bin/olifant
 GO  ?= /opt/homebrew/bin/go
 
-.PHONY: all build tidy clean run fmt vet test corpus
+.PHONY: all build tidy clean run fmt vet test corpus hooks
 
 all: build
 
@@ -26,3 +26,7 @@ clean:
 # Convenience: build + run the corpus builder with verbose output
 corpus: build
 	$(BIN) corpus build -v
+
+# Install the repo's git hooks (eval regression gate pre-push, #16)
+hooks:
+	git config core.hooksPath scripts/hooks
