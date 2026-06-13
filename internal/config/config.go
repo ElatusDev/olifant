@@ -17,7 +17,7 @@ import (
 //	OLIFANT_EMBEDDER          default: nomic-embed-text
 //	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
 //	OLIFANT_SYNTH_BACKEND     default: claude (values: ollama | claude) — flipped at F4 Promote (gate GF4 PASS 2026-06-12); ollama remains the offline fallback
-//	OLIFANT_SYNTH_CLAUDE_MODEL default: claude-fable-5 — the model that passed gate GF4; separate from OLIFANT_CLAUDE_MODEL (PSP executor)
+//	OLIFANT_SYNTH_CLAUDE_MODEL default: claude-sonnet-4-6 — production GA model; separate from OLIFANT_CLAUDE_MODEL (PSP executor). The original F4-promoted pin was claude-fable-5 (preview ID), retired by the CLI 2026-06-13 → 404 on every synth call; lesson logged as AP104 (avoid preview/codename pins in production defaults)
 //	OLIFANT_CHROMA_TENANT     default: default_tenant
 //	OLIFANT_CHROMA_DATABASE   default: default_database
 type Runtime struct {
@@ -39,7 +39,7 @@ func Resolve() Runtime {
 		Embedder:         env("OLIFANT_EMBEDDER", "nomic-embed-text"),
 		Synthesizer:      env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
 		SynthBackend:     env("OLIFANT_SYNTH_BACKEND", "claude"),
-		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", "claude-fable-5"),
+		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", "claude-sonnet-4-6"),
 		ChromaTenant:     env("OLIFANT_CHROMA_TENANT", "default_tenant"),
 		ChromaDatabase:   env("OLIFANT_CHROMA_DATABASE", "default_database"),
 	}

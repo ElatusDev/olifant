@@ -12,8 +12,8 @@ func TestResolve_SynthBackendDefaultClaude(t *testing.T) {
 	if rt.SynthBackend != "claude" {
 		t.Errorf("SynthBackend default = %q, want claude (F4 Promote flip)", rt.SynthBackend)
 	}
-	if rt.SynthClaudeModel != "claude-fable-5" {
-		t.Errorf("SynthClaudeModel default = %q, want claude-fable-5 (gate GF4 model pin)", rt.SynthClaudeModel)
+	if rt.SynthClaudeModel != "claude-sonnet-4-6" {
+		t.Errorf("SynthClaudeModel default = %q, want claude-sonnet-4-6 (post-fable-5 retirement)", rt.SynthClaudeModel)
 	}
 }
 
