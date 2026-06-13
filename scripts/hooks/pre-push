@@ -1,11 +1,14 @@
 #!/bin/sh
 # Eval regression gate — pre-push receipt check (#16, workflow
-# olifant-eval-gate-v1 E2). OBSERVE-ONLY until GE-2 flips enforcement:
-# prints the would-block verdict but always allows the push.
+# olifant-eval-gate-v1). ENFORCING (E4 GE-2 PASSED 2026-06-13): blocks
+# pushes that touch the eval-relevant surface without a fresh PASS
+# receipt for HEAD.
 #
 # Scope (D-EG3): only pushes touching the eval-relevant surface are
 # checked; everything else passes silently. The eval itself never runs
 # here (D-EG2) — run `olifant eval gate` explicitly after committing.
+# Sanctioned override: OLIFANT_EVAL_GATE_SKIP="<reason>" (audited in
+# ~/.olifant/eval-gate/receipts.log); --no-verify remains banned.
 
 range="origin/main...HEAD"
 scope='^internal/(synth|challenge|validate|prompt|chroma|eval|config)/|^cmd/(challenge|validate|prompt|eval)'
@@ -24,7 +27,7 @@ if "$bin" eval gate-check; then
     exit 0
 fi
 
-echo "[eval-gate] OBSERVE-ONLY: this push WOULD be blocked — no fresh PASS receipt for HEAD." >&2
-echo "[eval-gate] remediation: commit, run 'olifant eval gate' (~10 min), then push." >&2
+echo "[eval-gate] BLOCKED: no fresh PASS receipt for HEAD." >&2
+echo "[eval-gate] remediation: commit, run 'olifant eval gate' (~10-25 min), then push." >&2
 echo "[eval-gate] sanctioned override: OLIFANT_EVAL_GATE_SKIP=\"<reason>\" git push (audited)." >&2
-exit 0
+exit 1
