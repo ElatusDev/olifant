@@ -6,13 +6,27 @@
 #
 # Installed to ~/.olifant/eval-gate/nightly.sh (launchd TCC denies executing
 # scripts on removable volumes). Accessing the platform volume from launchd
-# additionally requires a one-time Full Disk Access grant (E3 finding).
-# Environment failures self-report to drift.log as SKIPPED (env) so a silent
-# night is distinguishable from a healthy one (IA3).
+# additionally requires a one-time Full Disk Access grant to /bin/sh in
+# System Settings → Privacy & Security (E3 finding, expanded post-merge).
+#
+# launchd's restricted environment surfaces two more gotchas that this
+# script handles inline:
+#   - Stripped PATH: launchd default PATH lacks /opt/homebrew/bin, so git
+#     and other Homebrew tools aren't found. We prepend explicitly here.
+#   - Make weirdness: the launchd-context `make build` fails with "No rule
+#     to make target `build'" even when an interactive shell in the same
+#     worktree succeeds with the same Makefile (root cause unclear; possibly
+#     XCode CLT proxy semantics). Bypassed by calling `go build` directly.
+#
+# Environment failures self-report to drift.log as SKIPPED (env) with the
+# captured stderr so a silent night is distinguishable from a healthy one
+# (IA3) and the failure mode is identifiable without re-running.
 set -u
 REPO="${OLIFANT_REPO:-/Volumes/elatusdev/platform/olifant}"
 WT="$(dirname "$REPO")/worktrees/olifant-eval-gate-nightly"
 DRIFT="$HOME/.olifant/eval-gate/drift.log"
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+export PATH
 
 skip() {
     mkdir -p "$(dirname "$DRIFT")"
@@ -21,11 +35,11 @@ skip() {
 }
 
 cd "$REPO" 2>/dev/null || skip "platform volume unreachable (unmounted, or launchd lacks Full Disk Access)"
-git fetch origin main --quiet 2>/dev/null || skip "git fetch failed (network or TCC)"
+err=$(git fetch origin main --quiet 2>&1)      || skip "git fetch: $err"
 if [ ! -d "$WT" ]; then
-    git worktree add --detach "$WT" origin/main >/dev/null 2>&1 || skip "worktree add failed"
+    err=$(git worktree add --detach "$WT" origin/main 2>&1) || skip "worktree add: $err"
 fi
-git -C "$WT" checkout --detach origin/main --quiet 2>/dev/null || skip "worktree checkout failed"
+err=$(git -C "$WT" checkout --detach origin/main --quiet 2>&1) || skip "worktree checkout: $err"
 cd "$WT" || skip "worktree cd failed"
-make build >/dev/null 2>&1 || skip "build failed on origin/main"
+err=$(/opt/homebrew/bin/go build -o bin/olifant . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
 exec ./bin/olifant eval gate --notify
