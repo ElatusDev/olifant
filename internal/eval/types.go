@@ -67,6 +67,24 @@ type CaseResult struct {
 	OutputYAMLPath string         `yaml:"output_yaml_path"`
 	Error          string         `yaml:"error,omitempty"`
 	ExpectedMatch  *ExpectedMatch `yaml:"expected_match,omitempty"`
+	// FirstAttemptViolations is the validator's verdict on the first synth
+	// attempt, persisted so a regression gate (#16 EG-F3) can self-diagnose
+	// retry-masked regressions: a case with Attempts>1 + blocker entries
+	// here names the specific cite values that triggered the retry. Empty
+	// when the first attempt was clean OR no validator was wired.
+	FirstAttemptViolations []FirstAttemptViolation `yaml:"first_attempt_violations,omitempty"`
+}
+
+// FirstAttemptViolation mirrors challenge.Violation but renders Severity as
+// its string name in YAML (challenge.Severity is an int that would otherwise
+// serialise as 0/1/2). Defined here so report.yaml / meta.yaml stay
+// human-readable without depending on a stringer-aware encoder.
+type FirstAttemptViolation struct {
+	Severity string `yaml:"severity"`
+	Code     string `yaml:"code"`
+	Location string `yaml:"location"`
+	Value    string `yaml:"value,omitempty"`
+	Note     string `yaml:"note,omitempty"`
 }
 
 // ExpectedMatch is populated when the suite case carried an Expected block.

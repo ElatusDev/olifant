@@ -72,6 +72,13 @@ type Result struct {
 	SynthTokensSec          float64
 	CiteAttempts            int         // 1 = first try clean; 2+ = retried after violations
 	RemainingCiteViolations []Violation // unresolved after final attempt (empty = clean)
+	// FirstAttemptViolations captures the validator's verdict on the first
+	// synth attempt — populated whenever a Validator is wired, even when the
+	// first attempt was clean (in which case it is empty). Lets a downstream
+	// regression gate (#16 EG-F3) self-diagnose retry-masked regressions: a
+	// case with attempts>1 + non-empty first-attempt blockers names the
+	// specific cite values that triggered the retry.
+	FirstAttemptViolations []Violation
 }
 
 // Run executes the full pipeline.
@@ -186,13 +193,15 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	attempts := 1
 	totalEvalCount := resp.EvalCount
 	totalEvalDuration := resp.EvalDuration
-	var lastViolations []Violation
+	var lastViolations, firstAttemptViolations []Violation
 	if cfg.Validator != nil {
 		violations, vErr := cfg.Validator.Validate(resp.Text)
 		if vErr != nil && cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  validator parse error: %v\n", vErr)
 		}
 		lastViolations = violations
+		// Snapshot before the retry loop overwrites lastViolations (EG-F3).
+		firstAttemptViolations = append([]Violation(nil), violations...)
 		for HasBlockers(violations) && attempts <= maxRetries {
 			blockers := FilterBlockers(violations)
 			if cfg.Verbose {
@@ -259,6 +268,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		SynthTokensSec:          tokensPerSec,
 		CiteAttempts:            attempts,
 		RemainingCiteViolations: lastViolations,
+		FirstAttemptViolations:  firstAttemptViolations,
 	}, nil
 }
 
