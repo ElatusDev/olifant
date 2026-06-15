@@ -159,6 +159,46 @@ func TestFileSHA256(t *testing.T) {
 	}
 }
 
+func TestFirstAttemptBlockerReport(t *testing.T) {
+	// A case with first-try clean (no violations) plus a case with a
+	// retry-masked BLOCKER (final B=0, attempts=2, attempt-1 had a blocker).
+	report := &Report{Cases: []CaseResult{
+		{CaseID: "c1", Attempts: 1, Blockers: 0}, // clean first try — silent in report
+		{CaseID: "c2", Attempts: 2, Blockers: 0, FirstAttemptViolations: []FirstAttemptViolation{
+			{Severity: "BLOCKER", Code: "cite_unresolved", Location: "confirms[1].cites[0]",
+				Value: "eval/failure-modes/v1.yaml#FM1", Note: "value does not exist"},
+			{Severity: "WARNING", Code: "weak_cite", Location: "confirms[0].cites[1]"},
+		}},
+	}}
+	out := FirstAttemptBlockerReport(report)
+	for _, want := range []string{
+		"c2 (attempts=2):",
+		"[cite_unresolved] value does not exist @ confirms[1].cites[0]",
+		`"eval/failure-modes/v1.yaml#FM1"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "c1") {
+		t.Fatalf("clean case c1 leaked into report:\n%s", out)
+	}
+	if strings.Contains(out, "weak_cite") {
+		t.Fatalf("non-BLOCKER WARNING surfaced; report should be BLOCKER-only:\n%s", out)
+	}
+}
+
+func TestFirstAttemptBlockerReportEmpty(t *testing.T) {
+	// Healthy report: all cases first-try clean → empty output (steady state).
+	report := &Report{Cases: []CaseResult{
+		{CaseID: "c1", Attempts: 1},
+		{CaseID: "c2", Attempts: 1},
+	}}
+	if got := FirstAttemptBlockerReport(report); got != "" {
+		t.Fatalf("expected empty report, got %q", got)
+	}
+}
+
 func TestGateFirstTryFloor(t *testing.T) {
 	healthy := rpt(12, 0, CaseResult{CaseID: "c1"})
 	healthy.FirstTryPassRate = 0.92

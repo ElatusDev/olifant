@@ -169,6 +169,11 @@ func evalGate(args []string) int {
 			fmt.Println("  FAIL:", r)
 		}
 		fmt.Println()
+		if rb := eval.FirstAttemptBlockerReport(report); rb != "" {
+			fmt.Println("First-attempt BLOCKERs (retry-masked from final counts; see AP103 for the canonical detection workflow):")
+			fmt.Print(rb)
+			fmt.Println()
+		}
 		fmt.Print(eval.DiffTable(report, baseline))
 		return gateExitFail
 	}

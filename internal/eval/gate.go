@@ -78,6 +78,36 @@ func Gate(report, baseline *Report, cfg GateConfig) GateVerdict {
 	return v
 }
 
+// FirstAttemptBlockerReport renders the per-case attempt-1 BLOCKER lines
+// for any case whose first attempt failed (EG-F3). Empty when no case in
+// the report has retry-masked BLOCKERs, which is the steady-state case on
+// a healthy run. The lines name code, location, and value so a gate FAIL
+// caused by a retry-masked regression self-diagnoses without needing a
+// single-case `challenge -v` repro (the AP103 detection workflow).
+func FirstAttemptBlockerReport(report *Report) string {
+	var sb strings.Builder
+	for _, c := range report.Cases {
+		var blockers []FirstAttemptViolation
+		for _, v := range c.FirstAttemptViolations {
+			if v.Severity == "BLOCKER" {
+				blockers = append(blockers, v)
+			}
+		}
+		if len(blockers) == 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "%s (attempts=%d):\n", c.CaseID, c.Attempts)
+		for _, v := range blockers {
+			fmt.Fprintf(&sb, "  [%s] %s @ %s", v.Code, v.Note, v.Location)
+			if v.Value != "" {
+				fmt.Fprintf(&sb, " (%q)", v.Value)
+			}
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
+}
+
 // DiffTable renders a per-case comparison of report vs baseline for the
 // FAIL path (E1's actionable summary). Baseline may be nil.
 func DiffTable(report, baseline *Report) string {

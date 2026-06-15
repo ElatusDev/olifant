@@ -162,6 +162,7 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 		result.Verdict = verdict
 		result.Proceed = proceed
 		result.Attempts = res.CiteAttempts
+		result.FirstAttemptViolations = toFirstAttemptViolations(res.FirstAttemptViolations)
 		result.RetrievedCount = res.RetrievedCount
 		result.EmbedMs = res.EmbedMs
 		result.RetrieveMs = res.RetrieveMs
@@ -316,21 +317,41 @@ func languageHintForPath(path string) string {
 
 func writeCaseMeta(caseDir string, c Case, res *challenge.Result) {
 	meta := map[string]interface{}{
-		"case_id":              c.ID,
-		"scope":                c.Scope,
-		"file":                 c.File,
-		"elapsed_ms":           res.Elapsed.Milliseconds(),
-		"embed_ms":             res.EmbedMs,
-		"retrieve_ms":          res.RetrieveMs,
-		"synth_ms":             res.SynthMs,
-		"eval_tokens":          res.SynthEvalCount,
-		"tokens_per_sec":       res.SynthTokensSec,
-		"retrieved_count":      res.RetrievedCount,
-		"cite_attempts":        res.CiteAttempts,
-		"remaining_violations": res.RemainingCiteViolations,
+		"case_id":                  c.ID,
+		"scope":                    c.Scope,
+		"file":                     c.File,
+		"elapsed_ms":               res.Elapsed.Milliseconds(),
+		"embed_ms":                 res.EmbedMs,
+		"retrieve_ms":              res.RetrieveMs,
+		"synth_ms":                 res.SynthMs,
+		"eval_tokens":              res.SynthEvalCount,
+		"tokens_per_sec":           res.SynthTokensSec,
+		"retrieved_count":          res.RetrievedCount,
+		"cite_attempts":            res.CiteAttempts,
+		"remaining_violations":     res.RemainingCiteViolations,
+		"first_attempt_violations": toFirstAttemptViolations(res.FirstAttemptViolations),
 	}
 	body, _ := yaml.Marshal(meta)
 	_ = os.WriteFile(filepath.Join(caseDir, "meta.yaml"), body, 0o644)
+}
+
+// toFirstAttemptViolations converts the challenge-package violation list
+// into the eval package's string-severity form (EG-F3). Nil-safe.
+func toFirstAttemptViolations(vs []challenge.Violation) []FirstAttemptViolation {
+	if len(vs) == 0 {
+		return nil
+	}
+	out := make([]FirstAttemptViolation, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, FirstAttemptViolation{
+			Severity: v.Severity.String(),
+			Code:     v.Code,
+			Location: v.Location,
+			Value:    v.Value,
+			Note:     v.Note,
+		})
+	}
+	return out
 }
 
 func writeReport(path string, r *Report) error {

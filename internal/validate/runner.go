@@ -65,6 +65,9 @@ type Result struct {
 	SynthTokensSec      float64
 	ValidateAttempts    int // 1 = clean on first try; 2+ = retried after blockers
 	RemainingViolations []challenge.Violation
+	// FirstAttemptViolations is the validator's verdict on the first synth
+	// attempt — populated whenever a Validator is wired (EG-F3, #16).
+	FirstAttemptViolations []challenge.Violation
 }
 
 // Run executes one validate round against the configured executor.
@@ -166,7 +169,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	attempts := 1
 	totalEvalCount := resp.EvalCount
 	totalEvalDuration := resp.EvalDuration
-	var lastViolations []challenge.Violation
+	var lastViolations, firstAttemptViolations []challenge.Violation
 
 	if cfg.Validator != nil {
 		violations, vErr := av.Validate(resp.Text)
@@ -174,6 +177,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			fmt.Fprintf(os.Stderr, "  assessment-validator parse error: %v\n", vErr)
 		}
 		lastViolations = violations
+		// Snapshot before the retry loop overwrites lastViolations (EG-F3).
+		firstAttemptViolations = append([]challenge.Violation(nil), violations...)
 		for challenge.HasBlockers(violations) && attempts <= maxRetries {
 			blockers := challenge.FilterBlockers(violations)
 			if cfg.Verbose {
@@ -223,19 +228,20 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 
 	return &Result{
-		RawJSON:             strings.TrimSpace(resp.Text),
-		YAMLOutput:          yamlOut,
-		JSONValid:           jsonValid,
-		RetrievedCount:      len(hits),
-		RetrievedSources:    sourcePaths,
-		Elapsed:             time.Since(start),
-		EmbedMs:             embedMs,
-		RetrieveMs:          retrieveMs,
-		SynthMs:             synthMs,
-		SynthEvalCount:      totalEvalCount,
-		SynthTokensSec:      tokensPerSec,
-		ValidateAttempts:    attempts,
-		RemainingViolations: lastViolations,
+		RawJSON:                strings.TrimSpace(resp.Text),
+		YAMLOutput:             yamlOut,
+		JSONValid:              jsonValid,
+		RetrievedCount:         len(hits),
+		RetrievedSources:       sourcePaths,
+		Elapsed:                time.Since(start),
+		EmbedMs:                embedMs,
+		RetrieveMs:             retrieveMs,
+		SynthMs:                synthMs,
+		SynthEvalCount:         totalEvalCount,
+		SynthTokensSec:         tokensPerSec,
+		ValidateAttempts:       attempts,
+		RemainingViolations:    lastViolations,
+		FirstAttemptViolations: firstAttemptViolations,
 	}, nil
 }
 
