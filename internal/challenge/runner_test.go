@@ -1,7 +1,9 @@
 package challenge
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // h builds a minimal hit fixture for the selectTopWithFMReserve tests.
@@ -9,6 +11,62 @@ import (
 // classification.
 func h(distance float32, scope, label string) retrievedHit {
 	return retrievedHit{Distance: distance, Scope: scope, Meta: map[string]interface{}{"source": label}}
+}
+
+func TestHitSummaries(t *testing.T) {
+	if got := hitSummaries(nil); got != nil {
+		t.Fatalf("hitSummaries(nil) = %v, want nil", got)
+	}
+
+	long := strings.Repeat("a", docSnippetMaxChars+50)
+	multibyte := strings.Repeat("é", docSnippetMaxChars+10) // 2-byte runes
+	hits := []retrievedHit{
+		{Doc: "short doc", Distance: 0.05, Scope: "mobile/code",
+			Meta: map[string]interface{}{"source": "SettingsScreen.tsx", "artifact_id": "abc123"}},
+		{Doc: long, Distance: 0.23, Scope: "universal/failure_modes",
+			Meta: map[string]interface{}{"source": "FM6"}},
+		{Doc: multibyte, Distance: 0.30, Scope: "backend/code", Meta: map[string]interface{}{}},
+	}
+	got := hitSummaries(hits)
+	if len(got) != 3 {
+		t.Fatalf("len(got)=%d want 3", len(got))
+	}
+
+	// Rank is 1-based and preserves order.
+	for i, hs := range got {
+		if hs.Rank != i+1 {
+			t.Errorf("hit %d rank=%d want %d", i, hs.Rank, i+1)
+		}
+	}
+	// Passthrough + Meta extraction.
+	if got[0].Distance != 0.05 || got[0].Scope != "mobile/code" {
+		t.Errorf("hit0 distance/scope = %v/%q", got[0].Distance, got[0].Scope)
+	}
+	if got[0].Source != "SettingsScreen.tsx" || got[0].ArtifactID != "abc123" {
+		t.Errorf("hit0 source/artifact = %q/%q", got[0].Source, got[0].ArtifactID)
+	}
+	if got[0].DocSnippet != "short doc" {
+		t.Errorf("hit0 snippet = %q want unchanged", got[0].DocSnippet)
+	}
+	// Missing artifact_id stays empty (omitempty); source present.
+	if got[1].Source != "FM6" || got[1].ArtifactID != "" {
+		t.Errorf("hit1 source/artifact = %q/%q", got[1].Source, got[1].ArtifactID)
+	}
+	// Missing source AND artifact_id → both empty.
+	if got[2].Source != "" || got[2].ArtifactID != "" {
+		t.Errorf("hit2 source/artifact should be empty, got %q/%q", got[2].Source, got[2].ArtifactID)
+	}
+	// ASCII truncation: exactly docSnippetMaxChars runes + ellipsis marker.
+	if r := []rune(got[1].DocSnippet); len(r) != docSnippetMaxChars+1 || r[docSnippetMaxChars] != '…' {
+		t.Errorf("hit1 snippet rune len=%d want %d+ellipsis", len(r), docSnippetMaxChars)
+	}
+	// Multi-byte truncation is rune-safe (valid UTF-8, correct rune count).
+	if r := []rune(got[2].DocSnippet); len(r) != docSnippetMaxChars+1 {
+		t.Errorf("hit2 multibyte snippet rune len=%d want %d+1", len(r), docSnippetMaxChars)
+	}
+	if !utf8.ValidString(got[2].DocSnippet) {
+		t.Errorf("hit2 snippet is not valid UTF-8")
+	}
 }
 
 func TestSelectTopWithFMReserve_codeHeavyMobile(t *testing.T) {

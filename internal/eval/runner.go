@@ -331,6 +331,9 @@ func writeCaseMeta(caseDir string, c Case, res *challenge.Result) {
 		"remaining_violations":     res.RemainingCiteViolations,
 		"first_attempt_violations": toFirstAttemptViolations(res.FirstAttemptViolations),
 	}
+	if len(res.RetrievedHits) > 0 {
+		meta["retrieved_hits"] = res.RetrievedHits
+	}
 	body, _ := yaml.Marshal(meta)
 	_ = os.WriteFile(filepath.Join(caseDir, "meta.yaml"), body, 0o644)
 }
