@@ -209,6 +209,33 @@ func (v *CiteValidator) dictionaryTermsAcrossScopes(requestScopes []string) []st
 // TermsForScopes returns, for each layer, the union of terms from the apex
 // (`business`) scope plus the request's specific scopes. Used by retry-hint
 // composition to keep enumerations focused.
+// nonPathCiteTerms returns the complete set of resolvable NON-path cite tokens
+// in scope — the union across every layer (dictionary/concept/constraint/
+// glossary) for the request scopes plus the globally-valid dictionary IDs.
+// This is the enum alt for the hybrid cites schema (cite-lookup-v1 / D-CL8):
+// it must be COMPLETE so a legitimately-resolvable token is never rejected
+// (an incomplete enum would cause a cite-recall regression). Path-shaped terms
+// are dropped — those are covered by the path-pattern alt, not the enum.
+func (v *CiteValidator) nonPathCiteTerms(requestScopes []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(terms []string) {
+		for _, t := range terms {
+			if t == "" || strings.ContainsRune(t, '/') || seen[t] {
+				continue
+			}
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	for _, layer := range []Layer{LayerDictionary, LayerConcept, LayerConstraint, LayerGlossary} {
+		add(v.TermsForScopes(layer, requestScopes))
+	}
+	add(v.dictionaryTermsAcrossScopes(requestScopes))
+	sort.Strings(out)
+	return out
+}
+
 func (v *CiteValidator) TermsForScopes(layer Layer, requestScopes []string) []string {
 	scopes := append([]string{ApexScope}, requestScopes...)
 	scopeMap := v.termsByLayerScope[layer]

@@ -52,7 +52,7 @@ var ValidateJSONSchema = map[string]interface{}{
 				"claim_assessments": map[string]interface{}{
 					"type":     "array",
 					"maxItems": 16,
-					"items":    claimAssessmentItemSchema(),
+					"items":    claimAssessmentItemSchema(stringArray(8)),
 				},
 				"standards_satisfied": stringArray(8),
 				"standards_violated":  stringArray(8),
@@ -76,9 +76,12 @@ var ValidateJSONSchema = map[string]interface{}{
 
 // BuildValidateSchema returns the validate schema with dictionary-enum
 // constraints injected into standards_satisfied and standards_violated when
-// a CiteValidator is supplied. Cites inside claim_assessments stay free-form
-// because they typically reference diff-file paths (e.g.,
-// core-api/foo.java#L42-L60) that the dictionary doesn't enumerate.
+// a CiteValidator is supplied. claim_assessments cites use the same hybrid
+// cite constraint as the challenge path (cite-lookup-v1 / D-CL8, D-CL6):
+// a path-shaped string under a whitelisted repo prefix (with optional
+// #anchor — covers diff-file paths like core-api/foo.java#L42-L60) OR an
+// in-scope non-path token. This blocks invented identifier tokens without
+// forbidding line-anchored diff paths.
 //
 // When cv is nil, returns the static ValidateJSONSchema unchanged.
 func BuildValidateSchema(cv *challenge.CiteValidator, requestScopes []string) map[string]interface{} {
@@ -87,6 +90,7 @@ func BuildValidateSchema(cv *challenge.CiteValidator, requestScopes []string) ma
 	}
 
 	standards := filterByPattern(allDictionaryTerms(cv), ReStandardID)
+	cites := cv.CitesSchema(requestScopes, 8)
 
 	return map[string]interface{}{
 		"type":                 "object",
@@ -119,7 +123,7 @@ func BuildValidateSchema(cv *challenge.CiteValidator, requestScopes []string) ma
 					"claim_assessments": map[string]interface{}{
 						"type":     "array",
 						"maxItems": 16,
-						"items":    claimAssessmentItemSchema(),
+						"items":    claimAssessmentItemSchema(cites),
 					},
 					"standards_satisfied": enumArrayOrEmpty(standards, 8),
 					"standards_violated":  enumArrayOrEmpty(standards, 8),
@@ -142,7 +146,7 @@ func BuildValidateSchema(cv *challenge.CiteValidator, requestScopes []string) ma
 	}
 }
 
-func claimAssessmentItemSchema() map[string]interface{} {
+func claimAssessmentItemSchema(cites map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -154,7 +158,7 @@ func claimAssessmentItemSchema() map[string]interface{} {
 				"enum": []string{"evidenced", "partial", "unmatched"},
 			},
 			"evidence": map[string]interface{}{"type": "string"},
-			"cites":    stringArray(8),
+			"cites":    cites,
 		},
 	}
 }
