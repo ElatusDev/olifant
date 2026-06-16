@@ -79,6 +79,20 @@ type Result struct {
 	// case with attempts>1 + non-empty first-attempt blockers names the
 	// specific cite values that triggered the retry.
 	FirstAttemptViolations []Violation
+	// RetrievedHits summarizes the selected top-N chunks fed to the
+	// synthesizer (F6, #17) — persisted to each eval case's meta.yaml so a
+	// regressed case is grep-diagnosable without a manual -v re-run.
+	RetrievedHits []HitSummary
+}
+
+// HitSummary is a compact, persistable view of one retrieved chunk (F6, #17).
+type HitSummary struct {
+	Rank       int     `yaml:"rank"`
+	Distance   float32 `yaml:"distance"`
+	Scope      string  `yaml:"scope"`
+	Source     string  `yaml:"source,omitempty"`
+	ArtifactID string  `yaml:"artifact_id,omitempty"`
+	DocSnippet string  `yaml:"doc_snippet,omitempty"`
 }
 
 // Run executes the full pipeline.
@@ -269,6 +283,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		CiteAttempts:            attempts,
 		RemainingCiteViolations: lastViolations,
 		FirstAttemptViolations:  firstAttemptViolations,
+		RetrievedHits:           hitSummaries(hits),
 	}, nil
 }
 
@@ -368,6 +383,43 @@ type retrievedHit struct {
 	Meta     map[string]interface{}
 	Distance float32
 	Scope    string
+}
+
+// docSnippetMaxChars bounds persisted Doc text so meta.yaml stays small.
+const docSnippetMaxChars = 160
+
+// hitSummaries builds persistable summaries for the selected top-N hits (F6,
+// #17). Pure (no I/O) so it unit-tests without Ollama/Chroma.
+func hitSummaries(hits []retrievedHit) []HitSummary {
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make([]HitSummary, 0, len(hits))
+	for i, h := range hits {
+		hs := HitSummary{
+			Rank:       i + 1,
+			Distance:   h.Distance,
+			Scope:      h.Scope,
+			DocSnippet: truncateRunes(h.Doc, docSnippetMaxChars),
+		}
+		if src, ok := h.Meta["source"].(string); ok {
+			hs.Source = src
+		}
+		if aid, ok := h.Meta["artifact_id"].(string); ok {
+			hs.ArtifactID = aid
+		}
+		out = append(out, hs)
+	}
+	return out
+}
+
+// truncateRunes trims s to at most n runes (UTF-8 safe), marking truncation.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // normalizeHitProvenance rewrites source/source_anchor breadcrumbs that the

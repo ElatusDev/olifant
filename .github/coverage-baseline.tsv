@@ -21,13 +21,13 @@ github.com/ElatusDev/olifant	0
 github.com/ElatusDev/olifant/cmd	4
 github.com/ElatusDev/olifant/dataset	80
 github.com/ElatusDev/olifant/history	42
-github.com/ElatusDev/olifant/internal/challenge	25
+github.com/ElatusDev/olifant/internal/challenge	42
 github.com/ElatusDev/olifant/internal/chroma	0
 github.com/ElatusDev/olifant/internal/config	90
 github.com/ElatusDev/olifant/internal/corpus	32
 github.com/ElatusDev/olifant/internal/dictionary	0
 github.com/ElatusDev/olifant/internal/embedder	81
-github.com/ElatusDev/olifant/internal/eval	29
+github.com/ElatusDev/olifant/internal/eval	35
 github.com/ElatusDev/olifant/internal/format	20
 github.com/ElatusDev/olifant/internal/ollama	4
 github.com/ElatusDev/olifant/internal/prompt	60
