@@ -46,13 +46,9 @@ type synthResult struct {
 	ElapsedMs    int64
 }
 
-// We deliberately do NOT override num_ctx for synthesis. Forcing a larger
-// context window made the 16 GB olifant mini OOM during model reload
-// (KV_CACHE_TYPE=q8_0 in the LaunchAgent isn't honoured by the homebrew
-// Ollama process currently running). Stay at Ollama's loaded default
-// (4096) and keep the prompt + output budget inside it. If goals need
-// more room, raise it via the OLIFANT_OLLAMA env or operator config — not
-// from inside this package.
+// We don't override num_ctx here — rely on Ollama's server default, which the
+// operator pins via OLLAMA_CONTEXT_LENGTH (F1, #12). Synthesis runs on the claude
+// CLI (D154); this Ollama path is the offline fallback.
 
 // synthesize asks the synthesizer model to produce a JSON plan from the
 // goal + retrieved hits. The model is grammar-constrained by planSynthSchema.
