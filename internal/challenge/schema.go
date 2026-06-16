@@ -1,6 +1,9 @@
 package challenge
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // BuildChallengeSchema returns the challenge JSON Schema with dynamic enum
 // constraints injected for the four applicable_rules slots, when a validator
@@ -27,6 +30,15 @@ func BuildChallengeSchema(v *CiteValidator, requestScopes []string) map[string]i
 	antiPatterns := filterByPattern(dictAll, reAntiPatternID)
 	decisions := filterByPattern(dictAll, reDecisionID)
 
+	// Hybrid cite constraint (cite-lookup-v1 / D-CL8). cites items must be
+	// EITHER a path-shaped string anchored to a whitelisted repo prefix (with
+	// optional #anchor / #Lx-Ly — preserves line-precise file cites) OR one of
+	// the resolvable non-path tokens in scope (dictionary/concept/constraint/
+	// glossary terms + global artifact IDs). This blocks invented identifier
+	// tokens like `artifact_id=02d73c5` at decode time without enumerating
+	// every file path (which would forbid valid line anchors).
+	cites := v.CitesSchema(requestScopes, citeMaxItems)
+
 	return map[string]interface{}{
 		"type":                 "object",
 		"required":             []string{"challenge"},
@@ -49,8 +61,8 @@ func BuildChallengeSchema(v *CiteValidator, requestScopes []string) map[string]i
 							"NEEDS_CLARIFICATION", "OUT_OF_SCOPE",
 						},
 					},
-					"confirms":    confirmsSchema(),
-					"contradicts": contradictsSchema(),
+					"confirms":    confirmsSchema(cites),
+					"contradicts": contradictsSchema(cites),
 					"clarify":     claritySchema(),
 					"applicable_rules": map[string]interface{}{
 						"type":                 "object",
@@ -177,8 +189,8 @@ var challengeJSONSchema = map[string]interface{}{
 						"OUT_OF_SCOPE",
 					},
 				},
-				"confirms":    confirmsSchema(),
-				"contradicts": contradictsSchema(),
+				"confirms":    confirmsSchema(stringArray()),
+				"contradicts": contradictsSchema(stringArray()),
 				"clarify":     claritySchema(),
 				"applicable_rules": map[string]interface{}{
 					"type":                 "object",
@@ -231,7 +243,7 @@ func ifVerdictThenProceed(verdict, proceed string) map[string]interface{} {
 	}
 }
 
-func confirmsSchema() map[string]interface{} {
+func confirmsSchema(cites map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"type": "array",
 		"items": map[string]interface{}{
@@ -240,13 +252,13 @@ func confirmsSchema() map[string]interface{} {
 			"required":             []string{"claim", "cites"},
 			"properties": map[string]interface{}{
 				"claim": map[string]interface{}{"type": "string"},
-				"cites": stringArray(),
+				"cites": cites,
 			},
 		},
 	}
 }
 
-func contradictsSchema() map[string]interface{} {
+func contradictsSchema(cites map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"type": "array",
 		"items": map[string]interface{}{
@@ -256,10 +268,63 @@ func contradictsSchema() map[string]interface{} {
 			"properties": map[string]interface{}{
 				"claim":   map[string]interface{}{"type": "string"},
 				"counter": map[string]interface{}{"type": "string"},
-				"cites":   stringArray(),
+				"cites":   cites,
 			},
 		},
 	}
+}
+
+// citeMaxItems caps cites per claim. Generous vs applicableRulesMaxItems(8)
+// because a single claim can legitimately reference several files + IDs;
+// the stress data showed up to 8 valid line-anchored cites on one claim.
+const citeMaxItems = 12
+
+// CitesSchema is the exported hybrid cite-array builder (cite-lookup-v1 /
+// D-CL8), shared by the challenge and validate schemas so both paths apply
+// the SAME structural cite constraint from the SAME resolver (D-CL6 — no
+// divergence). Derives the path-alt regex from the validator's whitelisted
+// repo prefixes and the enum-alt from the complete in-scope non-path token
+// set. `maxItems` lets each caller cap per its slot (challenge=12, validate=8).
+func (v *CiteValidator) CitesSchema(requestScopes []string, maxItems int) map[string]interface{} {
+	return citesSchema(citePathPattern(v.repoPrefixes), v.nonPathCiteTerms(requestScopes), maxItems)
+}
+
+// citesSchema builds the hybrid cite-array schema. Each item must satisfy anyOf:
+//   - pathPattern: a path-shaped string under a whitelisted repo prefix with
+//     an optional #anchor / #Lx-Ly suffix (free file paths + line precision), or
+//   - one of nonPathEnum: the resolvable non-path tokens in scope.
+//
+// The empty array stays legal (no minItems) per D-CL3. When pathPattern is
+// empty (no validator), falls back to the free stringArray() so the static
+// schema and nil-validator path are unchanged.
+func citesSchema(pathPattern string, nonPathEnum []string, maxItems int) map[string]interface{} {
+	if pathPattern == "" {
+		return stringArray()
+	}
+	pathAlt := map[string]interface{}{"type": "string", "pattern": pathPattern}
+	alts := []interface{}{pathAlt}
+	if len(nonPathEnum) > 0 {
+		alts = append(alts, map[string]interface{}{"type": "string", "enum": nonPathEnum})
+	}
+	return map[string]interface{}{
+		"type":     "array",
+		"maxItems": maxItems,
+		"items":    map[string]interface{}{"anyOf": alts},
+	}
+}
+
+// citePathPattern builds the anchored path-alt regex from the validator's
+// whitelisted repo prefixes. Mirrors validator.pathLikeRE's allowed char set
+// and the repoPrefix gate, plus an optional #anchor (e.g. #L1-L80, #D17).
+func citePathPattern(prefixes []string) string {
+	if len(prefixes) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		quoted = append(quoted, regexp.QuoteMeta(p))
+	}
+	return `^(` + strings.Join(quoted, "|") + `)/[A-Za-z0-9_ ./+-]*\.[A-Za-z0-9_]+(#[A-Za-z0-9._-]+)?$`
 }
 
 func claritySchema() map[string]interface{} {
