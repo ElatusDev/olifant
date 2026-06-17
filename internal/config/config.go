@@ -14,7 +14,7 @@ import (
 //
 //	OLIFANT_OLLAMA_URL        e.g., http://100.94.233.106:11434 (default)
 //	OLIFANT_CHROMA_URL        e.g., http://localhost:8000 (default — assumes port-forward)
-//	OLIFANT_EMBEDDER          default: nomic-embed-text
+//	OLIFANT_EMBEDDER          default: bge-m3 (1024d; F2 #13 — +7.7% prose recall@5 over nomic-embed-text, held the eval gate 12/12/0B)
 //	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
 //	OLIFANT_SYNTH_BACKEND     default: claude (values: ollama | claude) — flipped at F4 Promote (gate GF4 PASS 2026-06-12); ollama remains the offline fallback
 //	OLIFANT_SYNTH_CLAUDE_MODEL default: claude-sonnet-4-6 — production GA model; separate from OLIFANT_CLAUDE_MODEL (PSP executor). The original F4-promoted pin was claude-fable-5 (preview ID), retired by the CLI 2026-06-13 → 404 on every synth call; lesson logged as AP104 (avoid preview/codename pins in production defaults)
@@ -36,7 +36,7 @@ func Resolve() Runtime {
 	r := Runtime{
 		OllamaURL:        env("OLIFANT_OLLAMA_URL", "http://100.94.233.106:11434"),
 		ChromaURL:        env("OLIFANT_CHROMA_URL", "http://localhost:8000"),
-		Embedder:         env("OLIFANT_EMBEDDER", "nomic-embed-text"),
+		Embedder:         env("OLIFANT_EMBEDDER", "bge-m3"),
 		Synthesizer:      env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
 		SynthBackend:     env("OLIFANT_SYNTH_BACKEND", "claude"),
 		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", "claude-sonnet-4-6"),
