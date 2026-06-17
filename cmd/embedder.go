@@ -181,13 +181,14 @@ func embedderRecall(args []string) int {
 	appPath := fs.String("app", defaultModalApp, "modal app file path")
 	volume := fs.String("volume", defaultVolumeName, "modal volume name")
 	skipUpload := fs.Bool("skip-upload", false, "skip volume put of recall inputs (use existing volume copies)")
+	ollamaCandidate := fs.String("ollama-candidate", "", "evaluate an arbitrary Ollama-served embedding model as the candidate vs the OLIFANT_EMBEDDER baseline; skips the Modal path (F2/#13)")
 	_ = fs.Parse(args)
 
 	if *queriesPath == "" {
 		fmt.Fprintln(os.Stderr, "embedder recall: --queries is required")
 		return 2
 	}
-	if *baseline != "nomic" || *candidate != "v1" {
+	if *ollamaCandidate == "" && (*baseline != "nomic" || *candidate != "v1") {
 		fmt.Fprintf(os.Stderr, "embedder recall: unsupported pair baseline=%q candidate=%q\n", *baseline, *candidate)
 		return 2
 	}
@@ -233,18 +234,38 @@ func embedderRecall(args []string) int {
 		return 1
 	}
 
-	candResults, rc := recallCandidate(suite.Queries, sents, *topK, *modalBin, *appPath, *volume, *skipUpload, filepath.Dir(reportPath))
-	if rc != 0 {
-		return rc
-	}
-	baseResults, rc := recallBaseline(suite.Queries, sents, *topK, *batch)
-	if rc != 0 {
-		return rc
+	cfg := config.Resolve()
+	var baseResults, candResults []embedder.QueryResult
+	var baseName, candName string
+	if *ollamaCandidate != "" {
+		var rc int
+		baseResults, rc = recallOllama(suite.Queries, sents, *topK, *batch, cfg.Embedder)
+		if rc != 0 {
+			return rc
+		}
+		candResults, rc = recallOllama(suite.Queries, sents, *topK, *batch, *ollamaCandidate)
+		if rc != 0 {
+			return rc
+		}
+		baseName = cfg.Embedder + " (ollama)"
+		candName = *ollamaCandidate + " (ollama)"
+	} else {
+		var rc int
+		candResults, rc = recallCandidate(suite.Queries, sents, *topK, *modalBin, *appPath, *volume, *skipUpload, filepath.Dir(reportPath))
+		if rc != 0 {
+			return rc
+		}
+		baseResults, rc = recallOllama(suite.Queries, sents, *topK, *batch, cfg.Embedder)
+		if rc != 0 {
+			return rc
+		}
+		baseName = cfg.Embedder + " (ollama)"
+		candName = "domain-v1 (modal)"
 	}
 
 	report := embedder.BuildReport(suite.SuiteID,
-		embedder.EmbedderRecall{Name: "nomic-embed-text (ollama)", Recall5: embedder.RecallAt(baseResults, embedder.RecallK), Results: baseResults},
-		embedder.EmbedderRecall{Name: "domain-v1 (modal)", Recall5: embedder.RecallAt(candResults, embedder.RecallK), Results: candResults},
+		embedder.EmbedderRecall{Name: baseName, Recall5: embedder.RecallAt(baseResults, embedder.RecallK), Results: baseResults},
+		embedder.EmbedderRecall{Name: candName, Recall5: embedder.RecallAt(candResults, embedder.RecallK), Results: candResults},
 	)
 	raw, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -269,9 +290,9 @@ func embedderRecall(args []string) int {
 	return 0
 }
 
-// recallBaseline embeds queries + corpus via the Ollama-served nomic
-// embedder and ranks locally.
-func recallBaseline(queries []embedder.Query, sents []embedder.Sentence, topK, batch int) ([]embedder.QueryResult, int) {
+// recallOllama embeds queries + corpus via the named Ollama-served
+// embedding model and ranks locally.
+func recallOllama(queries []embedder.Query, sents []embedder.Sentence, topK, batch int, model string) ([]embedder.QueryResult, int) {
 	cfg := config.Resolve()
 	oc := ollama.New(cfg.OllamaURL)
 	defer oc.CloseIdle()
@@ -288,20 +309,20 @@ func recallBaseline(queries []embedder.Query, sents []embedder.Sentence, topK, b
 		if hi > len(texts) {
 			hi = len(texts)
 		}
-		vecs, err := oc.Embed(ctx, cfg.Embedder, texts[lo:hi])
+		vecs, err := oc.Embed(ctx, model, texts[lo:hi])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "embedder recall: ollama embed sentences [%d:%d]: %v\n", lo, hi, err)
 			return nil, 1
 		}
 		sentVecs = append(sentVecs, vecs...)
 		if lo/batch%10 == 0 {
-			fmt.Fprintf(os.Stderr, "baseline: embedded %d/%d sentences (%.0fs)\n", hi, len(texts), time.Since(start).Seconds())
+			fmt.Fprintf(os.Stderr, "%s: embedded %d/%d sentences (%.0fs)\n", model, hi, len(texts), time.Since(start).Seconds())
 		}
 	}
 
 	results := make([]embedder.QueryResult, 0, len(queries))
 	for _, q := range queries {
-		qv, err := oc.Embed(ctx, cfg.Embedder, []string{q.Text})
+		qv, err := oc.Embed(ctx, model, []string{q.Text})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "embedder recall: ollama embed query %s: %v\n", q.ID, err)
 			return nil, 1
