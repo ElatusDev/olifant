@@ -3,9 +3,9 @@ package challenge
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/ElatusDev/olifant/internal/chroma"
+	"github.com/ElatusDev/olifant/internal/retrieval"
 )
 
 // allScopes is the v1 default scope list used when no case-level scope filter
@@ -39,55 +39,22 @@ func unionWithUniversal(scopes []string) []string {
 }
 
 // retrieveV1 is the legacy retrieval path: 5 collection families ×
-// N scopes, top-K per (family, scope). Returned hits carry Scope =
-// "<scope>/<family>" for disambiguation. Errors per-collection are
-// logged + skipped (so a missing family doesn't fail the whole run).
+// N scopes, top-K per (family, scope). corpus + failure_modes are queried
+// for every scope; the code families only for code scopes. Returned hits
+// carry Scope = "<scope>/<family>"; the caller applies its own ranking
+// (fm-reserve), so this returns the merged set unsorted.
 func retrieveV1(
 	ctx context.Context, cc *chroma.Client, qEmb [][]float32,
 	scopes []string, topN int, verbose bool,
 ) []retrievedHit {
-	collFamilies := []string{"corpus", "code", "history", "code_history", "failure_modes"}
-	codeScopes := map[string]bool{
-		"backend": true, "webapp": true, "mobile": true, "e2e": true, "infra": true,
-	}
-	var hits []retrievedHit
-	for _, scope := range scopes {
-		for _, family := range collFamilies {
-			if family != "corpus" && family != "failure_modes" && !codeScopes[scope] {
-				continue
-			}
-			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
-			coll, err := cc.EnsureCollection(ctx, collName, nil)
-			if err != nil {
-				if verbose {
-					fmt.Printf("  %s: collection unavailable (%v) — skipping\n", collName, err)
-				}
-				continue
-			}
-			res, err := cc.Query(ctx, coll.ID, chroma.QueryRequest{
-				QueryEmbeddings: qEmb,
-				NResults:        topN,
-			})
-			if err != nil {
-				if verbose {
-					fmt.Printf("  %s: query failed (%v) — skipping\n", collName, err)
-				}
-				continue
-			}
-			if len(res.Documents) == 0 {
-				continue
-			}
-			for i := range res.Documents[0] {
-				hits = append(hits, retrievedHit{
-					Doc:      res.Documents[0][i],
-					Meta:     res.Metadatas[0][i],
-					Distance: res.Distances[0][i],
-					Scope:    scope + "/" + family,
-				})
-			}
-		}
-	}
-	return hits
+	return retrieval.QueryScopedFamilies(ctx, cc, qEmb, retrieval.FamilyConfig{
+		Families:       []string{"corpus", "code", "history", "code_history", "failure_modes"},
+		AlwaysFamilies: map[string]bool{"corpus": true, "failure_modes": true},
+		CodeScopes:     map[string]bool{"backend": true, "webapp": true, "mobile": true, "e2e": true, "infra": true},
+		Scopes:         scopes,
+		TopN:           topN,
+		Verbose:        verbose,
+	})
 }
 
 // retrieveV2 is the RAG-pivot Phase A2 retrieval path: one tag-indexed

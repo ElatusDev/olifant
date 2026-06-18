@@ -1,22 +1,23 @@
-// ClaudeCodeExecutor — second PSP executor. Shells out to the `claude`
-// CLI (Claude Code) which authenticates via the user's subscription
-// (OAuth/keychain). No API key required.
+// ClaudeCodeExecutor — second PSP executor. Drives the `claude` CLI (Claude
+// Code), which authenticates via the user's subscription (OAuth/keychain).
+// No API key required.
 //
-// Trade-off vs the SDK/API approach: Claude Code manages prompt caching
-// internally — the `usage.cache_*_input_tokens` fields in the CLI's JSON
-// output let us still measure cache effectiveness end-to-end.
+// The CLI invocation + result parsing live in internal/claudecli, shared with
+// the synth backend; this type is the thin PSP-side adapter (consolidated in
+// arch-consolidation-v1, F1). Claude Code manages prompt caching internally —
+// the usage.cache_*_input_tokens fields let us still measure cache
+// effectiveness end-to-end via Response.Cache*Tokens.
 //
 // Per psp-v1.md §10 v0 deferred items: "Claude Code subprocess integration".
 package psp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strings"
 	"time"
+
+	"github.com/ElatusDev/olifant/internal/claudecli"
 )
 
 // ClaudeCodeExecutor implements Executor over the `claude` CLI subprocess.
@@ -52,155 +53,39 @@ func (e *ClaudeCodeExecutor) WithSystemPrompt(s string) *ClaudeCodeExecutor {
 	return e
 }
 
-// claudeCodeJSONResult mirrors the shape of `claude -p --output-format json`.
-// Only the fields PSP needs are mapped; everything else is ignored.
-//
-// When --json-schema is passed, the parsed object lands in StructuredOutput
-// and Result is empty. When --json-schema is absent, the model's free-form
-// text is in Result and StructuredOutput is null. Execute reconciles both.
-type claudeCodeJSONResult struct {
-	Type             string              `json:"type"`
-	Subtype          string              `json:"subtype"`
-	IsError          bool                `json:"is_error"`
-	Result           string              `json:"result"`
-	StructuredOutput json.RawMessage     `json:"structured_output,omitempty"`
-	StopReason       string              `json:"stop_reason"`
-	DurationMs       int64               `json:"duration_ms"`
-	Usage            claudeCodeJSONUsage `json:"usage"`
-}
-
-type claudeCodeJSONUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-}
-
-// Execute invokes `claude -p` with the configured flags and parses the
-// JSON response. The schema (if non-empty) is enforced server-side via
-// --json-schema, so we get either a valid object back or claude returns
-// is_error=true.
+// Execute invokes `claude -p` via claudecli and maps the result onto a PSP
+// Response. The schema (if non-empty) is enforced server-side via
+// --json-schema; claudecli returns an error on an empty response, and this
+// adapter additionally unmarshals the raw JSON into the typed StepOutput.
 func (e *ClaudeCodeExecutor) Execute(ctx context.Context, prompt string, schema map[string]interface{}) (Response, error) {
-	// Apply executor-level timeout in addition to the runner's context.
-	// Whichever fires first kills the subprocess.
-	if e.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, e.timeout)
-		defer cancel()
-	}
-
-	args := []string{
-		"-p", prompt,
-		"--output-format", "json",
-		"--tools", "",
-		"--no-session-persistence",
-		"--permission-mode", "bypassPermissions",
-	}
-	if e.model != "" {
-		args = append(args, "--model", e.model)
-	}
-	if e.effort != "" {
-		args = append(args, "--effort", e.effort)
-	}
-	if e.systemPrompt != "" {
-		args = append(args, "--system-prompt", e.systemPrompt)
-	}
-	if len(schema) > 0 {
-		schemaBytes, err := json.Marshal(schema)
-		if err == nil {
-			args = append(args, "--json-schema", string(schemaBytes))
-		}
-	}
-
-	cmd := exec.CommandContext(ctx, e.binary, args...)
-	if e.workDir != "" {
-		cmd.Dir = e.workDir
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	start := time.Now()
-	runErr := cmd.Run()
-	elapsed := time.Since(start)
-
-	if runErr != nil {
-		return Response{TotalDurationNs: elapsed.Nanoseconds()},
-			fmt.Errorf("claude code subprocess: %w (stderr: %s)", runErr, trimStderr(stderr.String()))
-	}
-
-	var resp claudeCodeJSONResult
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return Response{TotalDurationNs: elapsed.Nanoseconds()},
-			fmt.Errorf("claude code: unparseable output: %w (stdout=%q)", err, truncate(stdout.String(), 200))
-	}
-
-	if resp.IsError {
-		return Response{TotalDurationNs: elapsed.Nanoseconds()},
-			fmt.Errorf("claude code returned error (subtype=%s): %s", resp.Subtype, resp.Result)
-	}
-
-	// When --json-schema was passed, structured_output is authoritative and
-	// result is empty. When no schema, result holds free-form text.
-	var raw string
-	switch {
-	case len(resp.StructuredOutput) > 0:
-		raw = string(resp.StructuredOutput)
-	default:
-		raw = stripJSONFence(strings.TrimSpace(resp.Result))
+	res, err := claudecli.Run(ctx, e.binary, claudecli.Args{
+		Prompt: prompt,
+		Model:  e.model,
+		Effort: e.effort,
+		System: e.systemPrompt,
+		Schema: schema,
+	}, claudecli.Options{WorkDir: e.workDir, Timeout: e.timeout})
+	if err != nil {
+		return Response{TotalDurationNs: res.ElapsedNs}, err
 	}
 
 	out := Response{
-		RawText:             raw,
-		EvalTokens:          resp.Usage.OutputTokens,
-		PromptTokens:        resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens,
-		OutputTokens:        resp.Usage.OutputTokens,
-		CacheCreationTokens: resp.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     resp.Usage.CacheReadInputTokens,
-		TotalDurationNs:     elapsed.Nanoseconds(),
+		RawText:             res.Raw,
+		EvalTokens:          res.Usage.OutputTokens,
+		PromptTokens:        res.Usage.InputTokens + res.Usage.CacheCreationInputTokens + res.Usage.CacheReadInputTokens,
+		OutputTokens:        res.Usage.OutputTokens,
+		CacheCreationTokens: res.Usage.CacheCreationInputTokens,
+		CacheReadTokens:     res.Usage.CacheReadInputTokens,
+		TotalDurationNs:     res.ElapsedNs,
 	}
 	if len(schema) > 0 {
-		if raw == "" {
-			return out, fmt.Errorf("claude code: empty response when schema was provided (subtype=%s, stop=%s)",
-				resp.Subtype, resp.StopReason)
-		}
 		var parsed StepOutput
-		if uerr := json.Unmarshal([]byte(raw), &parsed); uerr != nil {
+		if uerr := json.Unmarshal([]byte(res.Raw), &parsed); uerr != nil {
 			return out, fmt.Errorf("claude code: response is not valid JSON: %w", uerr)
 		}
 		out.Output = parsed
 	}
 	return out, nil
-}
-
-// stripJSONFence removes a leading ```json fence + trailing ``` if the
-// model wraps JSON despite --json-schema. Defensive — the validator
-// would fail downstream if a fence reached json.Unmarshal.
-func stripJSONFence(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
-		return s
-	}
-	if i := strings.Index(s, "\n"); i > 0 {
-		s = s[i+1:]
-	}
-	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
-	return strings.TrimSpace(s)
-}
-
-// trimStderr caps stderr to a reasonable length for error messages.
-// Claude Code can be chatty on auth or rate-limit failures.
-func trimStderr(s string) string {
-	s = strings.TrimSpace(s)
-	return truncate(s, 400)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…(truncated)"
 }
 
 // pspExecutorSystemPrompt is the stable system block. Claude Code caches

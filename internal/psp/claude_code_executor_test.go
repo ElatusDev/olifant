@@ -282,7 +282,7 @@ func TestClaudeCodeExecutor_Execute_NonZeroExit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on non-zero exit")
 	}
-	if !strings.Contains(err.Error(), "claude code subprocess") {
+	if !strings.Contains(err.Error(), "subprocess") {
 		t.Errorf("error should identify the subprocess: %v", err)
 	}
 }
@@ -331,22 +331,5 @@ func TestClaudeCodeExecutor_Execute_StripsCodeFence(t *testing.T) {
 	}
 	if resp.Output["x"] != float64(1) {
 		t.Errorf("Output[x]=%v want 1 (post-fence-strip)", resp.Output["x"])
-	}
-}
-
-func TestStripJSONFence(t *testing.T) {
-	for _, tc := range []struct {
-		in, want string
-	}{
-		{"{}", "{}"},
-		{"```json\n{}\n```", "{}"},
-		{"```\n{}\n```", "{}"},
-		{"  ```json\n{\"x\":1}\n```  ", `{"x":1}`},
-		{`{"a":1}`, `{"a":1}`},
-	} {
-		got := stripJSONFence(tc.in)
-		if got != tc.want {
-			t.Errorf("stripJSONFence(%q)=%q want %q", tc.in, got, tc.want)
-		}
 	}
 }

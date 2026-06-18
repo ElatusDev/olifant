@@ -3,26 +3,15 @@ package validate
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ElatusDev/olifant/internal/chroma"
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/retrieval"
 )
 
-// embedRequestMaxChars caps the embed-query body. nomic-embed-text via
-// Ollama rejects inputs above ~5000 chars regardless of the truncate flag,
-// so we cap defensively. Mirrors the constant in internal/challenge.
-const embedRequestMaxChars = 3500
-
-// RetrievedHit is one Chroma result row tagged with the source collection
-// scope/family so the prompt can render attribution.
-type RetrievedHit struct {
-	Doc      string
-	Meta     map[string]interface{}
-	Distance float32
-	Scope    string // e.g., "backend/corpus" or "webapp/code_history"
-}
+// RetrievedHit is one Chroma result row (shared shape — see internal/retrieval).
+type RetrievedHit = retrieval.Hit
 
 // RetrievalConfig parameterises a single Retrieve() call. The embedder model
 // and Chroma client settings are read once per run.
@@ -68,58 +57,20 @@ func Retrieve(ctx context.Context, cfg RetrievalConfig, query string) ([]Retriev
 	oc := ollama.New(cfg.OllamaURL)
 	cc := chroma.New(cfg.ChromaURL, cfg.Tenant, cfg.Database)
 
-	qEmb, err := oc.Embed(ctx, cfg.Embedder, []string{capChars(query, embedRequestMaxChars)})
+	qEmb, err := retrieval.Embed(ctx, oc, cfg.Embedder, query, retrieval.DefaultEmbedMaxChars)
 	if err != nil {
-		return nil, fmt.Errorf("embed: %w", err)
-	}
-	if len(qEmb) != 1 {
-		return nil, fmt.Errorf("embed returned %d vectors, expected 1", len(qEmb))
+		return nil, err
 	}
 
-	collFamilies := []string{"corpus", "code", "history", "code_history"}
-	var hits []RetrievedHit
-	for _, scope := range scopes {
-		for _, family := range collFamilies {
-			if family != "corpus" && !codeScopes[scope] {
-				continue
-			}
-			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
-			coll, err := cc.EnsureCollection(ctx, collName, nil)
-			if err != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: collection unavailable (%v) — skipping\n", collName, err)
-				}
-				continue
-			}
-			res, qerr := cc.Query(ctx, coll.ID, chroma.QueryRequest{
-				QueryEmbeddings: qEmb,
-				NResults:        cfg.TopN,
-			})
-			if qerr != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: query failed (%v) — skipping\n", collName, qerr)
-				}
-				continue
-			}
-			if len(res.Documents) == 0 {
-				continue
-			}
-			for i := range res.Documents[0] {
-				hits = append(hits, RetrievedHit{
-					Doc:      res.Documents[0][i],
-					Meta:     res.Metadatas[0][i],
-					Distance: res.Distances[0][i],
-					Scope:    scope + "/" + family,
-				})
-			}
-		}
-	}
-
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Distance < hits[j].Distance })
-	if len(hits) > cfg.TopN {
-		hits = hits[:cfg.TopN]
-	}
-	return hits, nil
+	hits := retrieval.QueryScopedFamilies(ctx, cc, qEmb, retrieval.FamilyConfig{
+		Families:       []string{"corpus", "code", "history", "code_history"},
+		AlwaysFamilies: map[string]bool{"corpus": true},
+		CodeScopes:     codeScopes,
+		Scopes:         scopes,
+		TopN:           cfg.TopN,
+		Verbose:        cfg.Verbose,
+	})
+	return retrieval.SortByDistanceTruncate(hits, cfg.TopN), nil
 }
 
 // renderRetrievedBlock formats hits for inclusion in the validator prompt.
@@ -151,17 +102,4 @@ func renderRetrievedBlock(hits []RetrievedHit) string {
 		sb.WriteByte('\n')
 	}
 	return sb.String()
-}
-
-// capChars trims s to maxChars at a UTF-8 boundary. Local copy — the
-// challenge package's version is unexported.
-func capChars(s string, maxChars int) string {
-	if len(s) <= maxChars {
-		return s
-	}
-	end := maxChars
-	for end > 0 && (s[end]&0xC0) == 0x80 {
-		end--
-	}
-	return s[:end]
 }

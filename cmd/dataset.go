@@ -12,17 +12,16 @@ import (
 
 	"github.com/ElatusDev/olifant/dataset"
 	"github.com/ElatusDev/olifant/internal/embedder"
-	"github.com/ElatusDev/olifant/internal/format"
 )
 
-// Dataset dispatches `olifant dataset <build|stats|index|pack|sanitize-docs|format-pairs>`
+// Dataset dispatches `olifant dataset <build|stats|index|pack|sanitize-docs|embedder-triples>`
 // per the olifant-training-plan.md §4 extraction recipe (build/stats), the
 // failure-modes ChromaDB indexer (index), the LoRA-upload packer (pack),
 // the markdown attribution sweeper (sanitize-docs), and the RAG-pivot
-// Phase C1 verdict-YAML training-pair pipeline (format-pairs).
+// Phase B1a embedder-triple pipeline (embedder-triples).
 func Dataset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index|pack|sanitize-docs|format-pairs|embedder-triples)")
+		fmt.Fprintln(os.Stderr, "olifant dataset: missing action (build|stats|index|pack|sanitize-docs|embedder-triples)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -37,8 +36,6 @@ func Dataset(args []string) int {
 		return datasetPack(rest)
 	case "sanitize-docs":
 		return datasetSanitizeDocs(rest)
-	case "format-pairs":
-		return datasetFormatPairs(rest)
 	case "embedder-triples":
 		return datasetEmbedderTriples(rest)
 	default:
@@ -348,102 +345,6 @@ func sourcesToStrings(xs []dataset.SourceKind) []string {
 		out[i] = string(x)
 	}
 	return out
-}
-
-// datasetFormatPairs runs the RAG-pivot Phase C1 verdict-YAML pair pipeline.
-// 2 stages, both via `claude --print --model opus` subprocess per
-// feedback_olifant_uses_claude_code_only.md + _opus_latest.md:
-//
-//	stage 1 (paraphrase): archetype seed → N paraphrastic variants
-//	stage 2 (synth):      each variant → 1 verdict-YAML doc
-//
-// Output: append-only JSONL at --out (default
-// ~/.olifant/training/format-v1/pairs.jsonl). Resumable: on --resume,
-// prompts already present in the file are skipped.
-func datasetFormatPairs(args []string) int {
-	fs := flag.NewFlagSet("dataset format-pairs", flag.ExitOnError)
-	out := fs.String("out", "", "JSONL output path (default: ~/.olifant/training/format-v1/pairs.jsonl)")
-	model := fs.String("model", "opus", "claude model (must remain opus per HARD RULE)")
-	bin := fs.String("claude-bin", "claude", "claude CLI binary")
-	variants := fs.Int("variants", 30, "paraphrastic variants per archetype")
-	conc := fs.Int("concurrency", 1, "parallel stage-2 calls (rate-limit-aware)")
-	resume := fs.Bool("resume", true, "skip prompts already on disk")
-	verbose := fs.Bool("v", false, "verbose progress logging")
-	timeoutSec := fs.Int("per-call-timeout", 90, "per-claude-call timeout seconds")
-	limit := fs.Int("limit", 0, "process only the first N archetypes (default 0 = all 50)")
-	onlyIDs := fs.String("only", "", "comma-separated archetype IDs to include (overrides --limit)")
-	overallTimeout := fs.Int("timeout", 0, "overall timeout in seconds (default 0 = none)")
-	_ = fs.Parse(args)
-
-	all := format.Archetypes()
-	selected := all
-	if *onlyIDs != "" {
-		want := map[string]bool{}
-		for _, s := range strings.Split(*onlyIDs, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				want[s] = true
-			}
-		}
-		selected = selected[:0]
-		for _, a := range all {
-			if want[a.ID] {
-				selected = append(selected, a)
-			}
-		}
-		if len(selected) == 0 {
-			fmt.Fprintf(os.Stderr, "dataset format-pairs: no archetypes matched --only=%s\n", *onlyIDs)
-			return 2
-		}
-	} else if *limit > 0 && *limit < len(all) {
-		selected = all[:*limit]
-	}
-
-	fmt.Println("format-pairs config:")
-	fmt.Printf("  archetypes:       %d (of %d)\n", len(selected), len(all))
-	fmt.Printf("  variants/arch:    %d\n", *variants)
-	fmt.Printf("  concurrency:      %d\n", *conc)
-	fmt.Printf("  per-call timeout: %ds\n", *timeoutSec)
-	fmt.Printf("  resume:           %v\n", *resume)
-	fmt.Printf("  model:            %s\n", *model)
-	if *out != "" {
-		fmt.Printf("  out:              %s\n", *out)
-	}
-
-	ctx := context.Background()
-	if *overallTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(*overallTimeout)*time.Second)
-		defer cancel()
-	}
-
-	stats, err := format.Generate(ctx, format.GenConfig{
-		Archetypes:      selected,
-		VariantsPerArch: *variants,
-		OutPath:         *out,
-		ClaudeBin:       *bin,
-		Model:           *model,
-		Resume:          *resume,
-		Concurrency:     *conc,
-		MaxRetries:      1,
-		Verbose:         *verbose,
-		PerCallTimeout:  time.Duration(*timeoutSec) * time.Second,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "dataset format-pairs:", err)
-		return 1
-	}
-
-	fmt.Println()
-	fmt.Println("format-pairs summary:")
-	fmt.Printf("  archetypes processed: %d / %d\n", stats.ArchetypesProcessed, len(selected))
-	fmt.Printf("  stage 1 calls:        %d (failures %d, elapsed %s)\n",
-		stats.StageOneCalls, stats.StageOneFailures, stats.StageOneElapsed.Round(time.Second))
-	fmt.Printf("  stage 2 variants:     attempted %d  accepted %d  rejected %d\n",
-		stats.VariantsAttempted, stats.VariantsAccepted, stats.VariantsRejected)
-	fmt.Printf("  stage 2 elapsed:      %s\n", stats.StageTwoElapsed.Round(time.Second))
-	fmt.Printf("  total elapsed:        %s\n", stats.TotalElapsed.Round(time.Second))
-	return 0
 }
 
 // datasetEmbedderTriples runs the RAG-pivot Phase B1a pipeline: load the
