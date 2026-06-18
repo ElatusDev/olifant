@@ -36,6 +36,7 @@ func Validate(args []string) int {
 	scopes := fs.String("scopes", "", "comma-separated scope filter for retrieval (e.g., backend,webapp); empty = default 7-scope union")
 	maxTokens := fs.Int("max-tokens", 4096, "synthesizer num_predict")
 	topN := fs.Int("top-n", 8, "retrieved chunks per validate call")
+	diffMaxChars := fs.Int("diff-max-chars", 0, "cap on diff chars embedded in the synth prompt; 0 = default (120k, claude-window-sized)")
 	temp := fs.Float64("temperature", 0, "synthesizer temperature")
 	timeoutSec := fs.Int("timeout", 300, "overall timeout seconds")
 	retries := fs.Int("retries", -1, "additional synth attempts on weak assessments; -1 = auto (1 when validator wired)")
@@ -146,6 +147,7 @@ func Validate(args []string) int {
 		TopN:               *topN,
 		Temperature:        *temp,
 		MaxTokens:          *maxTokens,
+		DiffMaxChars:       *diffMaxChars,
 		Verbose:            *verbose,
 		Validator:          citeValidator,
 		MaxValidateRetries: *retries,

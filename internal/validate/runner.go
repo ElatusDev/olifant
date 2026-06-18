@@ -28,7 +28,12 @@ type Config struct {
 	TopN        int      // retrieval top-N; default 8
 	Temperature float64
 	MaxTokens   int
-	Verbose     bool
+	// DiffMaxChars caps the diff embedded in the synth prompt. 0 = default
+	// (defaultDiffMaxChars). The old 30k cap was sized for the small-context
+	// local synth; the claude backend's window is far larger, so big core-api
+	// diffs no longer need aggressive truncation (bookend P3 tuning).
+	DiffMaxChars int
+	Verbose      bool
 
 	// Validator is the optional cite-resolver. When supplied, retrieved
 	// chunks ground the assessment and per-claim retry is enabled.
@@ -49,6 +54,12 @@ type Config struct {
 // gives enough headroom for ~12 claim assessments without truncation.
 // Tunable per call via Config.MaxTokens.
 const defaultMaxTokens = 4096
+
+// defaultDiffMaxChars caps the diff embedded in the validation prompt.
+// 120k chars (~30k tokens) leaves ample room alongside retrieval context in
+// the claude synth window — 4x the legacy 30k cap that truncated large
+// core-api branches and produced misleading "unmatched" verdicts (bookend P3).
+const defaultDiffMaxChars = 120000
 
 // Result is the validator's output.
 type Result struct {
@@ -132,7 +143,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	//    their validator-resolvable knowledge-base/-prefixed form before
 	//    the model sees them (mirrors challenge.normalizeHitProvenance).
 	normalizeHitProvenance(cfg.Validator, hits)
-	prompt := buildPrompt(cfg.Claim, cfg.Diff, hits)
+	diffMax := cfg.DiffMaxChars
+	if diffMax <= 0 {
+		diffMax = defaultDiffMaxChars
+	}
+	prompt := buildPrompt(cfg.Claim, cfg.Diff, hits, diffMax)
 	dynamicSchema := BuildValidateSchema(cfg.Validator, cfg.Scopes)
 
 	sc := cfg.Synth
@@ -315,7 +330,7 @@ func ResolveDiff(ref string, repoCwd string) (string, error) {
 	return string(out), nil
 }
 
-func buildPrompt(claim, diff string, hits []RetrievedHit) string {
+func buildPrompt(claim, diff string, hits []RetrievedHit, diffMaxChars int) string {
 	var sb strings.Builder
 	sb.WriteString("You are validating a Claude Code claim against the actual git diff produced.\n\n")
 	sb.WriteString("CLAIM (what Claude said it did):\n```\n")
@@ -328,9 +343,9 @@ func buildPrompt(claim, diff string, hits []RetrievedHit) string {
 	}
 
 	sb.WriteString("DIFF (what actually changed):\n```diff\n")
-	if len(diff) > 30000 {
-		sb.WriteString(diff[:30000])
-		sb.WriteString("\n… [diff truncated at 30000 chars]\n")
+	if len(diff) > diffMaxChars {
+		sb.WriteString(diff[:diffMaxChars])
+		fmt.Fprintf(&sb, "\n… [diff truncated at %d chars]\n", diffMaxChars)
 	} else {
 		sb.WriteString(diff)
 	}
