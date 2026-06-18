@@ -36,7 +36,28 @@ Flags:
 - `-v` verbose progress
 
 ### `olifant corpus diff` — not yet implemented
-### `olifant corpus index` — not yet implemented (waits on ChromaDB)
+
+### `olifant corpus index`
+
+Reads the per-scope v1 NDJSON under `<kb-root>/corpus/v1`, embeds each chunk
+(Ollama, default `bge-m3`), and upserts into the scope-partitioned `corpus_*`
+ChromaDB collections.
+
+```
+./bin/olifant corpus index -v
+```
+
+Flags:
+- `--kb-root` (default: autodetected)
+- `--corpus-dir` (default: `<kb-root>/corpus/v1`)
+- `--batch` chunks per embed/upsert batch (default: 32)
+- `--scopes` comma-separated scope filter (default: all `.ndjson` files in the corpus dir)
+- `--dry-run` walk + report only, skip embed/upsert
+- `--timeout` overall timeout in seconds (default: 1800)
+- `-v` verbose progress
+
+`olifant corpus index-v2` is the RAG-pivot variant that indexes a single
+tag-indexed curriculum collection (see `olifant-rag-pivot-workflow.md`).
 
 ### `olifant prompt build "<goal>"`
 

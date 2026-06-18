@@ -91,7 +91,8 @@ the single source of endpoints + model names, all overridable via
 `OLIFANT_*` env vars so the same binary runs from a laptop, the Olifant
 Mac mini, or a k8s pod over the tailnet. Defaults: Ollama at
 `100.94.233.106:11434`, ChromaDB at `localhost:8000` (assumes a
-port-forward), embedder `nomic-embed-text`, synthesizer
+port-forward), embedder `bge-m3` (1024d; default since F2/#13 —
+`nomic-embed-text` was the prior default), synthesizer
 `qwen2.5:14b-instruct-q6_K`. Subcommands should populate their Config
 structs from `config.Resolve()` rather than reading env directly.
 
