@@ -79,6 +79,12 @@ All must pass on PRs to `main`:
 
 ## Architecture
 
+> **Canonical reference:** the full architecture — the three external seams,
+> the KB 6-layer data substrate, the `internal/` package map, the runtime
+> pipelines, and the decisions index — lives in
+> `../knowledge-base/architecture/olifant-architecture.md`. The summary below
+> is the quick orientation; that doc is the source of truth.
+
 **Scopes.** Everything is organized around 7 scopes (`internal/corpus/scope.go`):
 `universal, backend, webapp, mobile, e2e, infra, platform-process`.
 Path → scope mapping is prefix-based and order-sensitive (first match
