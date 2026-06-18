@@ -15,9 +15,9 @@ import (
 	"github.com/ElatusDev/olifant/internal/corpus"
 )
 
-// Corpus dispatches `olifant corpus <build|diff|index|index-v2|scan|prose|classify|stats>`.
+// Corpus dispatches `olifant corpus <build|index|index-v2|scan|prose|classify|stats>`.
 //
-// build/diff/index belong to the v1 corpus pipeline (ChromaDB indexing,
+// build/index belong to the v1 corpus pipeline (ChromaDB indexing,
 // per platform/knowledge-base/corpus/CORPUS-V1.md). scan/prose/stats
 // belong to the v2 curriculum extractor (per
 // olifant-fine-tune-v2-corpus-curriculum-workflow.md) — same package
@@ -29,7 +29,7 @@ import (
 // Chroma collection with tag-axis metadata preserved.
 func Corpus(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|diff|index|index-v2|scan|prose|classify|stats)")
+		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|index|index-v2|scan|prose|classify|stats)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -37,9 +37,6 @@ func Corpus(args []string) int {
 	switch action {
 	case "build":
 		return corpusBuild(rest)
-	case "diff":
-		fmt.Fprintln(os.Stderr, "corpus diff: not yet implemented")
-		return 1
 	case "index":
 		return corpusIndex(rest)
 	case "index-v2":
