@@ -8,7 +8,17 @@ version: "2"
 linters:
   default: standard
 
+  # dupl is a duplication BUDGET (arch-consolidation-v1 AC-F3): it guards
+  # against re-introducing the kind of copy-paste the F1/F2 extractions
+  # removed (the 3× retrieval loop, the 2× claude-CLI wrapper). At the
+  # default 150-token threshold it catches ~40-line near-duplicate blocks —
+  # the size those seams were — so a regression surfaces at PR time.
+  enable:
+    - dupl
+
   settings:
+    dupl:
+      threshold: 150
     errcheck:
       # defer X.Close() is the idiomatic Go pattern; errcheck reads
       # too pedantically here. Same applies to drain-the-body Close().
@@ -19,6 +29,12 @@ linters:
 
   exclusions:
     rules:
+      # Pre-existing dupl baseline (grandfathered when the budget was added,
+      # AC-F3): the corpus chunkers (hcl ≈ typescript) and indexer_v2's two
+      # near-identical blocks predate the guard. Real refactor candidates —
+      # tighten in a follow-up; the budget already blocks NEW duplication.
+      - path: internal/corpus/(hcl|typescript|indexer_v2)\.go
+        linters: [dupl]
       # Pre-existing baseline; cleaned in followup PR (see retro §"Pre-existing lint baseline").
       - path: internal/corpus/yaml_chunker\.go
         linters: [ineffassign]
