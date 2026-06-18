@@ -35,8 +35,6 @@ Flags:
 - `--out` (default: `<kb-root>/corpus/v1`)
 - `-v` verbose progress
 
-### `olifant corpus diff` — not yet implemented
-
 ### `olifant corpus index`
 
 Reads the per-scope v1 NDJSON under `<kb-root>/corpus/v1`, embeds each chunk
