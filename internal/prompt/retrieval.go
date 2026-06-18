@@ -7,27 +7,15 @@ package prompt
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/chroma"
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/retrieval"
 )
 
-// embedGoalMaxChars caps the goal text before embedding. nomic-embed-text
-// rejects inputs above ~5000 chars even with truncate=true; cap defensively.
-const embedGoalMaxChars = 3500
-
-// Hit is one retrieval result row from a single Chroma collection.
-type Hit struct {
-	Doc      string
-	Meta     map[string]interface{}
-	Distance float32
-	// Scope is `<scope>/<family>` for provenance breadcrumbs in the prompt
-	// (e.g., "backend/corpus", "webapp/code_history").
-	Scope string
-}
+// Hit is one retrieval result row (shared shape — see internal/retrieval).
+type Hit = retrieval.Hit
 
 // retrieveConfig is the subset of Config needed by retrieve().
 type retrieveConfig struct {
@@ -56,6 +44,7 @@ var codeScopes = map[string]bool{
 }
 
 // collFamilies are the Chroma collection name prefixes queried per scope.
+// corpus is always queried; the code families only for codeScopes.
 var collFamilies = []string{"corpus", "code", "history", "code_history"}
 
 // retrieve embeds the goal once, queries every relevant Chroma collection,
@@ -68,12 +57,9 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 	cc := chroma.New(cfg.ChromaURL, cfg.Tenant, cfg.Database)
 
 	embedStart := time.Now()
-	qEmb, eerr := oc.Embed(ctx, cfg.Embedder, []string{capChars(cfg.Goal, embedGoalMaxChars)})
+	qEmb, eerr := retrieval.Embed(ctx, oc, cfg.Embedder, cfg.Goal, retrieval.DefaultEmbedMaxChars)
 	if eerr != nil {
 		return nil, 0, 0, fmt.Errorf("embed goal: %w", eerr)
-	}
-	if len(qEmb) != 1 {
-		return nil, 0, 0, fmt.Errorf("embed returned %d vectors, expected 1", len(qEmb))
 	}
 	embedMs = time.Since(embedStart).Milliseconds()
 
@@ -83,48 +69,17 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 	}
 
 	retrStart := time.Now()
-	for _, scope := range scopes {
-		for _, family := range collFamilies {
-			if family != "corpus" && !codeScopes[scope] {
-				continue
-			}
-			collName := family + "_" + strings.ReplaceAll(scope, "-", "_")
-			coll, cerr := cc.EnsureCollection(ctx, collName, nil)
-			if cerr != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: collection unavailable (%v) — skipping\n", collName, cerr)
-				}
-				continue
-			}
-			res, qerr := cc.Query(ctx, coll.ID, chroma.QueryRequest{
-				QueryEmbeddings: qEmb,
-				NResults:        cfg.TopN,
-			})
-			if qerr != nil {
-				if cfg.Verbose {
-					fmt.Printf("  %s: query failed (%v) — skipping\n", collName, qerr)
-				}
-				continue
-			}
-			if len(res.Documents) == 0 {
-				continue
-			}
-			for i := range res.Documents[0] {
-				hits = append(hits, Hit{
-					Doc:      res.Documents[0][i],
-					Meta:     res.Metadatas[0][i],
-					Distance: res.Distances[0][i],
-					Scope:    scope + "/" + family,
-				})
-			}
-		}
-	}
+	hits = retrieval.QueryScopedFamilies(ctx, cc, qEmb, retrieval.FamilyConfig{
+		Families:       collFamilies,
+		AlwaysFamilies: map[string]bool{"corpus": true},
+		CodeScopes:     codeScopes,
+		Scopes:         scopes,
+		TopN:           cfg.TopN,
+		Verbose:        cfg.Verbose,
+	})
 	retrieveMs = time.Since(retrStart).Milliseconds()
 
-	sortHitsByDistance(hits)
-	if len(hits) > cfg.TopN {
-		hits = hits[:cfg.TopN]
-	}
+	hits = retrieval.SortByDistanceTruncate(hits, cfg.TopN)
 
 	if cfg.Verbose {
 		fmt.Println("  retrieved hits:")
@@ -133,23 +88,6 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 		}
 	}
 	return hits, embedMs, retrieveMs, nil
-}
-
-// sortHitsByDistance sorts in place — lower distance is more relevant.
-func sortHitsByDistance(hits []Hit) {
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Distance < hits[j].Distance })
-}
-
-// capChars trims s at a UTF-8 boundary so the result is ≤ maxChars bytes.
-func capChars(s string, maxChars int) string {
-	if len(s) <= maxChars {
-		return s
-	}
-	end := maxChars
-	for end > 0 && (s[end]&0xC0) == 0x80 {
-		end--
-	}
-	return s[:end]
 }
 
 // sourcePathsFromHits returns unique "source" metadata values in hit order.

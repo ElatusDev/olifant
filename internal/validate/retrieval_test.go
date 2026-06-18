@@ -154,25 +154,3 @@ func TestRenderRetrievedBlock_NonEmptyHits_IncludesSources(t *testing.T) {
 		}
 	}
 }
-
-func TestCapChars_AsciiAndUTF8(t *testing.T) {
-	if got := capChars("hello", 10); got != "hello" {
-		t.Fatalf("under-cap should pass through, got %q", got)
-	}
-	if got := capChars("hello world", 5); got != "hello" {
-		t.Fatalf("ascii cap, got %q", got)
-	}
-	// UTF-8 — cap inside a multibyte rune should rewind to boundary.
-	s := "héllo" // é = 2 bytes
-	// cap=2 → byte 1 is 0x68 ('h'), byte 2 is 0xC3 (start of é) — would land inside é.
-	got := capChars(s, 2)
-	if len(got) > 2 {
-		t.Fatalf("expected <=2 bytes, got %d (%q)", len(got), got)
-	}
-	// The result must be valid UTF-8 (no truncated rune).
-	for i, r := range got {
-		if r == 0xFFFD { // replacement char from broken UTF-8
-			t.Fatalf("capChars produced invalid UTF-8 at byte %d", i)
-		}
-	}
-}

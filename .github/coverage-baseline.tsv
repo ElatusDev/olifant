@@ -34,6 +34,7 @@ github.com/ElatusDev/olifant/internal/ollama	4
 github.com/ElatusDev/olifant/internal/prompt	60
 github.com/ElatusDev/olifant/internal/psp	57
 github.com/ElatusDev/olifant/internal/repos	0
+github.com/ElatusDev/olifant/internal/retrieval	94
 github.com/ElatusDev/olifant/internal/shortterm	0
 github.com/ElatusDev/olifant/internal/synth	96
 github.com/ElatusDev/olifant/internal/validate	64

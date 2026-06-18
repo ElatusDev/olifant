@@ -14,6 +14,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/chroma"
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/retrieval"
 	"github.com/ElatusDev/olifant/internal/synth"
 	"gopkg.in/yaml.v3"
 )
@@ -116,12 +117,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// 1. Embed the request (capped — long --file inputs would otherwise
 	//    exceed the embedder context window).
 	embedStart := time.Now()
-	qEmb, err := oc.Embed(ctx, cfg.Embedder, []string{capChars(cfg.Request, embedRequestMaxChars)})
+	qEmb, err := retrieval.Embed(ctx, oc, cfg.Embedder, cfg.Request, embedRequestMaxChars)
 	if err != nil {
 		return nil, fmt.Errorf("embed request: %w", err)
-	}
-	if len(qEmb) != 1 {
-		return nil, fmt.Errorf("embed returned %d vectors, expected 1", len(qEmb))
 	}
 	embedMs := time.Since(embedStart).Milliseconds()
 
@@ -316,18 +314,6 @@ func jsonToYAML(raw string) (string, bool) {
 	return strings.TrimRight(string(out), "\n"), true
 }
 
-// capChars trims s to maxChars at a UTF-8 boundary.
-func capChars(s string, maxChars int) string {
-	if len(s) <= maxChars {
-		return s
-	}
-	end := maxChars
-	for end > 0 && (s[end]&0xC0) == 0x80 {
-		end--
-	}
-	return s[:end]
-}
-
 // fmReserve is the number of failure_modes slots guaranteed in the
 // retrieved top-N regardless of cosine-distance ranking. Code/history
 // chunks dominate cosine similarity for file-content queries (a tsx
@@ -376,14 +362,10 @@ func selectTopWithFMReserve(hits []retrievedHit, topN, reserve int) []retrievedH
 	return selected
 }
 
-// retrievedHit is one Chroma result row, package-shared so Run() and
-// buildChallengePrompt() can pass slices freely.
-type retrievedHit struct {
-	Doc      string
-	Meta     map[string]interface{}
-	Distance float32
-	Scope    string
-}
+// retrievedHit is one Chroma result row (shared shape — see
+// internal/retrieval), package-shared so Run() and buildChallengePrompt()
+// can pass slices freely.
+type retrievedHit = retrieval.Hit
 
 // docSnippetMaxChars bounds persisted Doc text so meta.yaml stays small.
 const docSnippetMaxChars = 160
