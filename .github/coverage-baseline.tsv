@@ -23,6 +23,7 @@ github.com/ElatusDev/olifant/dataset	80
 github.com/ElatusDev/olifant/history	42
 github.com/ElatusDev/olifant/internal/challenge	42
 github.com/ElatusDev/olifant/internal/chroma	0
+github.com/ElatusDev/olifant/internal/claudecli	94
 github.com/ElatusDev/olifant/internal/config	90
 github.com/ElatusDev/olifant/internal/corpus	32
 github.com/ElatusDev/olifant/internal/dictionary	0

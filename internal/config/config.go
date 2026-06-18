@@ -17,7 +17,13 @@ import (
 //	OLIFANT_EMBEDDER          default: bge-m3 (1024d; F2 #13 — +7.7% prose recall@5 over nomic-embed-text, held the eval gate 12/12/0B)
 //	OLIFANT_SYNTHESIZER       default: qwen2.5:14b-instruct-q6_K
 //	OLIFANT_SYNTH_BACKEND     default: claude (values: ollama | claude) — flipped at F4 Promote (gate GF4 PASS 2026-06-12); ollama remains the offline fallback
-//	OLIFANT_SYNTH_CLAUDE_MODEL default: claude-sonnet-4-6 — production GA model; separate from OLIFANT_CLAUDE_MODEL (PSP executor). The original F4-promoted pin was claude-fable-5 (preview ID), retired by the CLI 2026-06-13 → 404 on every synth call; lesson logged as AP104 (avoid preview/codename pins in production defaults)
+//	OLIFANT_SYNTH_CLAUDE_MODEL default: DefaultClaudeModel (claude.go). Selects the
+//	  model for the SYNTH backend (challenge/validate/eval). This is a SEPARATE knob
+//	  from OLIFANT_CLAUDE_MODEL, which selects the model for the PSP per-step EXECUTOR
+//	  — two distinct roles, intentionally independently tunable; both default to the
+//	  same DefaultClaudeModel constant. The original F4-promoted pin was claude-fable-5
+//	  (preview ID), retired by the CLI 2026-06-13 → 404 on every synth call; lesson
+//	  logged as AP104 (avoid preview/codename pins in production defaults).
 //	OLIFANT_CHROMA_TENANT     default: default_tenant
 //	OLIFANT_CHROMA_DATABASE   default: default_database
 type Runtime struct {
@@ -39,7 +45,7 @@ func Resolve() Runtime {
 		Embedder:         env("OLIFANT_EMBEDDER", "bge-m3"),
 		Synthesizer:      env("OLIFANT_SYNTHESIZER", "qwen2.5:14b-instruct-q6_K"),
 		SynthBackend:     env("OLIFANT_SYNTH_BACKEND", "claude"),
-		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", "claude-sonnet-4-6"),
+		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", DefaultClaudeModel),
 		ChromaTenant:     env("OLIFANT_CHROMA_TENANT", "default_tenant"),
 		ChromaDatabase:   env("OLIFANT_CHROMA_DATABASE", "default_database"),
 	}
