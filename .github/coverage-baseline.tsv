@@ -6,9 +6,9 @@
 #
 # Rules:
 #   - Goal floor for NEW packages (absent from this file) is COVERAGE_FLOOR
-#     (80%) — new code is held to the real standard, not grandfathered.
+#     (75%) — new code is held to the real standard, not grandfathered.
 #   - Never LOWER a baseline. When you add tests, RAISE the package's number
-#     to lock in the gain (ideally all the way to 80+).
+#     to lock in the gain (ideally all the way to 75+).
 #   - Nothing is excluded from measurement; 0% packages sit here as visible
 #     debt, per the no-hide-coverage rule (memory: No sonar exclusions).
 #

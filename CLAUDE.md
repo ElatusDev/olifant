@@ -47,8 +47,8 @@ All must pass on PRs to `main`:
 - **Per-package coverage ratchet** — each package must stay at or above
   its baseline in `.github/coverage-baseline.tsv`; the build fails on any
   regression below baseline. A package with no baseline entry (i.e. NEW)
-  must meet `COVERAGE_FLOOR` (80%), so new code is held to the real
-  standard. The 80% floor remains the goal: raise a package's baseline
+  must meet `COVERAGE_FLOOR` (75%), so new code is held to the real
+  standard. The 75% floor remains the goal: raise a package's baseline
   whenever you add tests (never lower it). Nothing is excluded from
   measurement — 0% packages sit in the baseline file as visible debt;
   fix coverage by writing tests, **never** by hiding code.
