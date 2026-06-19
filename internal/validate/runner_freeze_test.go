@@ -46,7 +46,7 @@ func TestRunGenerateRequestFrozen(t *testing.T) {
 
 	want, err := json.Marshal(ollama.GenerateRequest{
 		Model:  "synth-m",
-		Prompt: buildPrompt(cfg.Claim, cfg.Diff, nil),
+		Prompt: buildPrompt(cfg.Claim, cfg.Diff, nil, defaultDiffMaxChars),
 		System: systemPrompt,
 		Stream: false,
 		Options: map[string]interface{}{
