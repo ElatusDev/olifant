@@ -116,7 +116,9 @@ func TestCorpusIndex_Integration(t *testing.T) {
 	corpusDir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(corpusDir, "backend.ndjson"),
 		[]byte(`{"chunk_id":"1","source":"x","scope":"backend","doc_type":"code","body":"b"}`+"\n"), 0o644)
-	code := corpusIndex([]string{"-corpus-dir", corpusDir})
+	// -kb-root explicit so the test doesn't depend on findUp locating a real
+	// knowledge-base ancestor (absent in CI's standalone checkout).
+	code := corpusIndex([]string{"-kb-root", t.TempDir(), "-corpus-dir", corpusDir})
 	if code != 0 {
 		t.Errorf("corpusIndex = %d, want 0", code)
 	}
