@@ -18,22 +18,22 @@
 #
 # package	floor
 github.com/ElatusDev/olifant	0
-github.com/ElatusDev/olifant/cmd	4
-github.com/ElatusDev/olifant/dataset	80
-github.com/ElatusDev/olifant/history	42
-github.com/ElatusDev/olifant/internal/challenge	42
-github.com/ElatusDev/olifant/internal/chroma	0
+github.com/ElatusDev/olifant/cmd	75
+github.com/ElatusDev/olifant/dataset	86
+github.com/ElatusDev/olifant/history	85
+github.com/ElatusDev/olifant/internal/challenge	85
+github.com/ElatusDev/olifant/internal/chroma	94
 github.com/ElatusDev/olifant/internal/claudecli	94
 github.com/ElatusDev/olifant/internal/config	90
-github.com/ElatusDev/olifant/internal/corpus	32
-github.com/ElatusDev/olifant/internal/dictionary	0
-github.com/ElatusDev/olifant/internal/embedder	81
-github.com/ElatusDev/olifant/internal/eval	35
-github.com/ElatusDev/olifant/internal/ollama	4
-github.com/ElatusDev/olifant/internal/prompt	60
-github.com/ElatusDev/olifant/internal/psp	57
-github.com/ElatusDev/olifant/internal/repos	0
+github.com/ElatusDev/olifant/internal/corpus	85
+github.com/ElatusDev/olifant/internal/dictionary	92
+github.com/ElatusDev/olifant/internal/embedder	85
+github.com/ElatusDev/olifant/internal/eval	91
+github.com/ElatusDev/olifant/internal/ollama	95
+github.com/ElatusDev/olifant/internal/prompt	88
+github.com/ElatusDev/olifant/internal/psp	85
+github.com/ElatusDev/olifant/internal/repos	87
 github.com/ElatusDev/olifant/internal/retrieval	94
-github.com/ElatusDev/olifant/internal/shortterm	0
+github.com/ElatusDev/olifant/internal/shortterm	90
 github.com/ElatusDev/olifant/internal/synth	96
-github.com/ElatusDev/olifant/internal/validate	64
+github.com/ElatusDev/olifant/internal/validate	86
