@@ -43,6 +43,8 @@ func main() {
 		os.Exit(cmd.Eval(args))
 	case "validate":
 		os.Exit(cmd.Validate(args))
+	case "harvest":
+		os.Exit(cmd.Harvest(args))
 	case "history":
 		os.Exit(cmd.History(args))
 	case "dataset":

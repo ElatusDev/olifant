@@ -150,7 +150,7 @@ func TestCursor_RoundTrip(t *testing.T) {
 		t.Fatalf("SaveCursor: %v", err)
 	}
 	got, err := LoadCursor(path)
-	if err != nil || !(got["a"] && got["b"] && got["c"]) {
+	if err != nil || !got["a"] || !got["b"] || !got["c"] {
 		t.Errorf("cursor round-trip: %v %v", got, err)
 	}
 }
