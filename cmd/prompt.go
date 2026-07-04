@@ -15,16 +15,20 @@ import (
 	synthlib "github.com/ElatusDev/olifant/internal/synth"
 )
 
-// Prompt dispatches `olifant prompt <build|...>`.
+// Prompt dispatches `olifant prompt <build|context|check>`.
 func Prompt(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant prompt: missing action (build)")
+		fmt.Fprintln(os.Stderr, "olifant prompt: missing action (build|context|check)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
 	switch action {
 	case "build":
 		return promptBuild(rest)
+	case "context":
+		return promptContext(rest)
+	case "check":
+		return promptCheck(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant prompt: unknown action %q\n", action)
 		return 2

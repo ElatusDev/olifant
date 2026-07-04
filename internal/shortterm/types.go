@@ -18,9 +18,11 @@ type TurnRecord struct {
 	Request    string   `yaml:"request"`
 
 	// Exactly one of these is populated per record.
-	Challenge   *ChallengeBlock   `yaml:"challenge,omitempty"`
-	PromptBuild *PromptBuildBlock `yaml:"prompt_build,omitempty"`
-	Validate    *ValidateBlock    `yaml:"validate,omitempty"`
+	Challenge     *ChallengeBlock     `yaml:"challenge,omitempty"`
+	PromptBuild   *PromptBuildBlock   `yaml:"prompt_build,omitempty"`
+	PromptContext *PromptContextBlock `yaml:"prompt_context,omitempty"`
+	PromptCheck   *PromptCheckBlock   `yaml:"prompt_check,omitempty"`
+	Validate      *ValidateBlock      `yaml:"validate,omitempty"`
 
 	Performance PerformanceBlock `yaml:"performance"`
 }
@@ -40,6 +42,23 @@ type PromptBuildBlock struct {
 	OutputPath     string   `yaml:"output_path,omitempty"`
 	SignalsEmitted []string `yaml:"signals_emitted,omitempty"`
 	PayloadBytes   int      `yaml:"payload_bytes,omitempty"`
+}
+
+// PromptContextBlock captures what `prompt context` retrieved (no synthesis).
+type PromptContextBlock struct {
+	RetrievedCount int      `yaml:"retrieved_count"`
+	Sources        []string `yaml:"sources,omitempty"`
+	PayloadBytes   int      `yaml:"payload_bytes,omitempty"`
+}
+
+// PromptCheckBlock captures a `prompt check` cite-gate verdict on a document.
+type PromptCheckBlock struct {
+	DocPath         string   `yaml:"doc_path"`
+	Verdict         string   `yaml:"verdict"`
+	Resolved        int      `yaml:"resolved"`
+	Stale           int      `yaml:"stale"`
+	Unresolved      int      `yaml:"unresolved"`
+	UnresolvedCites []string `yaml:"unresolved_cites,omitempty"`
 }
 
 // ValidateBlock — placeholder for the upcoming validate subcommand.

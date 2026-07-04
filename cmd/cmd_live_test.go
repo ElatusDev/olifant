@@ -45,6 +45,38 @@ func TestLive_CmdChallenge(t *testing.T) {
 	}
 }
 
+// TestLive_CmdPromptContext drives `prompt context` against the live stack —
+// the retrieval-only grounding path (charter R2, D-OP1: embed+retrieve, no
+// synthesis, so this is seconds-cheap even on the mini).
+func TestLive_CmdPromptContext(t *testing.T) {
+	livetest.RequireStack(t)
+
+	if code := promptContext([]string{
+		"-no-record",
+		"-scope", "backend",
+		"-top", "5",
+		"how is tenant scoping enforced on entities",
+	}); code != 0 {
+		t.Errorf("prompt context = %d, want 0", code)
+	}
+}
+
+// TestLive_CmdPromptCheck runs the cite gate against the real knowledge base
+// (offline path — needs the KB checkout, not the stack) on a real charter doc.
+func TestLive_CmdPromptCheck(t *testing.T) {
+	_, kbRoot := livetest.RequireKB(t)
+
+	doc := filepath.Join(kbRoot, "olifant", "CHARTER.md")
+	if _, err := os.Stat(doc); err != nil {
+		t.Skipf("charter doc not present in this KB checkout: %v", err)
+	}
+	code := promptCheck([]string{"-no-record", "-v", doc})
+	if code == 2 {
+		t.Fatalf("prompt check setup error (exit 2)")
+	}
+	t.Logf("prompt check on %s exit=%d (1 = unresolved cites found — informative, gate is advisory)", doc, code)
+}
+
 // TestLive_CmdEvalRun drives `eval run` end-to-end (the gate's pipeline) on a
 // one-case suite against the live stack with the Ollama synth backend.
 func TestLive_CmdEvalRun(t *testing.T) {
