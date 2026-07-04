@@ -1,7 +1,7 @@
 BIN ?= bin/olifant
 GO  ?= /opt/homebrew/bin/go
 
-.PHONY: all build tidy clean run fmt vet test corpus hooks nightly-install nightly-remove
+.PHONY: all build tidy clean run fmt vet test test-integration corpus hooks nightly-install nightly-remove
 
 all: build
 
@@ -19,6 +19,17 @@ vet:
 
 test:
 	$(GO) test ./...
+
+# Integration tests against the LIVE seams (Ollama, ChromaDB, claude CLI).
+# Gated behind the `integration` build tag so they never run in default CI.
+# Tests t.Skip individually when a dependency is unreachable, so this is safe
+# to run with the stack partly down. Needs: tailnet Ollama + a ChromaDB
+# port-forward (kubectl -n platform port-forward deploy/chromadb 8000:8000).
+# -p 1 serializes packages: Ollama runs one generation at a time (~10 tok/s on
+# the mini), so parallel synth-heavy packages (challenge/eval/validate/cmd)
+# queue behind each other and blow their per-test deadlines.
+test-integration:
+	$(GO) test -tags=integration -count=1 -v -p 1 ./...
 
 clean:
 	rm -rf bin/ ../knowledge-base/corpus/v1/*.ndjson ../knowledge-base/corpus/v1/manifest.yaml

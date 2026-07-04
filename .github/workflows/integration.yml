@@ -1,0 +1,52 @@
+name: Integration (live stack)
+
+# Integration tests run against the LIVE external seams — tailnet Ollama,
+# ChromaDB (colima port-forward), and the claude CLI. None of these are
+# reachable from a GitHub-hosted runner, so this workflow targets a
+# SELF-HOSTED runner on the Olifant machine (label: self-hosted). Without
+# such a runner registered, the job simply stays queued — it never blocks PR
+# CI, which lives in ci.yml and excludes the `integration` build tag.
+#
+# Each test t.Skip()s when its dependency is down, so a partial stack yields
+# "skipped", not failure.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Nightly at 09:10 UTC (after the eval-gate nightly backstop).
+    - cron: '10 9 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: live-stack integration tests
+    runs-on: [self-hosted]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Ensure ChromaDB port-forward
+        run: |
+          # Best-effort: bring up the colima chromadb + port-forward if not
+          # already running. Tests skip gracefully if this fails.
+          if ! curl -sf -m 3 http://localhost:8000/api/v2/heartbeat >/dev/null; then
+            kubectl -n platform scale deploy/chromadb --replicas=1 || true
+            kubectl -n platform rollout status deploy/chromadb --timeout=120s || true
+            nohup kubectl -n platform port-forward deploy/chromadb 8000:8000 >/tmp/chroma-pf.log 2>&1 &
+            for i in $(seq 1 10); do
+              curl -sf -m 3 http://localhost:8000/api/v2/heartbeat >/dev/null && break
+              sleep 2
+            done
+          fi
+
+      - name: Integration tests
+        run: make test-integration
