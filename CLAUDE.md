@@ -76,6 +76,8 @@ All must pass on PRs to `main`:
 - `challenge "<request>"` — step 0, produce a verdict in YAML.
 - `turn list|show|stats` — inspect the short-term event ledger.
 - `embedder train|pull|ls` — domain-embedder training on Modal.
+- `harvest [run|accept]` — mine reactions ⨝ turns into human-gated proposals
+  (eval cases / corpus gaps / dict terms); propose-only, deterministic, cursor-deduped.
 
 ## Architecture
 
