@@ -22,6 +22,7 @@ type TurnRecord struct {
 	PromptBuild   *PromptBuildBlock   `yaml:"prompt_build,omitempty"`
 	PromptContext *PromptContextBlock `yaml:"prompt_context,omitempty"`
 	PromptCheck   *PromptCheckBlock   `yaml:"prompt_check,omitempty"`
+	Retrieve      *RetrieveBlock      `yaml:"retrieve,omitempty"`
 	Validate      *ValidateBlock      `yaml:"validate,omitempty"`
 
 	Performance PerformanceBlock `yaml:"performance"`
@@ -59,6 +60,16 @@ type PromptCheckBlock struct {
 	Stale           int      `yaml:"stale"`
 	Unresolved      int      `yaml:"unresolved"`
 	UnresolvedCites []string `yaml:"unresolved_cites,omitempty"`
+}
+
+// RetrieveBlock captures what `retrieve` returned plus the token-economy
+// measurement (payload vs the cited source docs' total bytes — charter R5).
+type RetrieveBlock struct {
+	Inferred       bool     `yaml:"inferred,omitempty"`
+	RetrievedCount int      `yaml:"retrieved_count"`
+	Sources        []string `yaml:"sources,omitempty"`
+	PayloadBytes   int      `yaml:"payload_bytes,omitempty"`
+	SourceBytes    int64    `yaml:"source_bytes,omitempty"`
 }
 
 // ValidateBlock — placeholder for the upcoming validate subcommand.

@@ -77,6 +77,8 @@ All must pass on PRs to `main`:
 - `turn list|show|stats` — inspect the short-term event ledger.
 - `embedder train|pull|ls` — domain-embedder training on Modal.
 - `harvest [run|accept]` — mine reactions ⨝ turns into human-gated proposals
+- `retrieve "<question>"` — top-N scoped, cite-tagged KB chunks for any question
+  (retrieval-instead-of-reading; scope inferred from cwd; economy ratio in the summary).
   (eval cases / corpus gaps / dict terms); propose-only, deterministic, cursor-deduped.
 
 ## Architecture

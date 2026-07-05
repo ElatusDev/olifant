@@ -45,6 +45,8 @@ func main() {
 		os.Exit(cmd.Validate(args))
 	case "harvest":
 		os.Exit(cmd.Harvest(args))
+	case "retrieve":
+		os.Exit(cmd.Retrieve(args))
 	case "history":
 		os.Exit(cmd.History(args))
 	case "dataset":
