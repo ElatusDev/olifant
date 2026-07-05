@@ -96,6 +96,7 @@ func TestContextAndCheckPathsImportNoSynth(t *testing.T) {
 	files := []string{
 		"prompt_context.go",
 		"prompt_check.go",
+		"retrieve.go",
 		"../internal/prompt/context.go",
 		"../internal/promptgate/resolver.go",
 		"../internal/promptgate/check.go",

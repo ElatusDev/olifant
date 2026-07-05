@@ -77,6 +77,21 @@ func TestLive_CmdPromptCheck(t *testing.T) {
 	t.Logf("prompt check on %s exit=%d (1 = unresolved cites found — informative, gate is advisory)", doc, code)
 }
 
+// TestLive_CmdRetrieve drives `retrieve` against the live stack — the general
+// retrieval-instead-of-reading path (charter R5; embed+retrieve only).
+func TestLive_CmdRetrieve(t *testing.T) {
+	livetest.RequireStack(t)
+
+	if code := Retrieve([]string{
+		"-no-record",
+		"-scope", "backend,universal",
+		"-top", "5",
+		"what are the transaction propagation rules for scheduled workers",
+	}); code != 0 {
+		t.Errorf("retrieve = %d, want 0", code)
+	}
+}
+
 // TestLive_CmdEvalRun drives `eval run` end-to-end (the gate's pipeline) on a
 // one-case suite against the live stack with the Ollama synth backend.
 func TestLive_CmdEvalRun(t *testing.T) {
