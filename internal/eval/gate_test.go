@@ -127,6 +127,49 @@ func TestReceiptRoundTripAndFilters(t *testing.T) {
 	}
 }
 
+func TestLatestReceiptSuiteScoped(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "receipts.log")
+
+	legacy := Receipt{Verdict: "PASS", GitSHA: "aaa", SuiteSHA: "s0", CorpusSHA: "c1", RunID: "legacy", Timestamp: "2026-06-12T01:00:00Z"}
+	feeding := Receipt{Verdict: "PASS", SuiteID: "code-feeding-v2", GitSHA: "bbb", SuiteSHA: "s1", CorpusSHA: "c1", RunID: "cf", Timestamp: "2026-07-06T01:00:00Z"}
+	realUsage := Receipt{Verdict: "PASS", SuiteID: "real-usage-v1", GitSHA: "bbb", SuiteSHA: "s2", CorpusSHA: "c1", RunID: "ru", Timestamp: "2026-07-06T02:00:00Z"}
+	for _, r := range []Receipt{legacy, feeding, realUsage} {
+		if err := WriteReceipt("", logPath, r); err != nil {
+			t.Fatalf("WriteReceipt: %v", err)
+		}
+	}
+
+	// Baseline lookup is suite-scoped: real-usage's newest PASS never
+	// resolves to another suite's receipt (D-RG2 / AC6).
+	got, err := LatestReceipt(logPath, Receipt{Verdict: "PASS", SuiteID: "code-feeding-v2"})
+	if err != nil || got == nil || got.RunID != "cf" {
+		t.Fatalf("code-feeding lookup = %+v, %v; want cf", got, err)
+	}
+	got, err = LatestReceipt(logPath, Receipt{Verdict: "PASS", SuiteID: "real-usage-v1"})
+	if err != nil || got == nil || got.RunID != "ru" {
+		t.Fatalf("real-usage lookup = %+v, %v; want ru", got, err)
+	}
+
+	// Pre-HV-F1 lines (no suite_id) never satisfy a SuiteID filter (AC6),
+	// even when every other field matches.
+	got, err = LatestReceipt(logPath, Receipt{Verdict: "PASS", SuiteID: "code-feeding-v2", GitSHA: "aaa"})
+	if err != nil || got != nil {
+		t.Fatalf("legacy line matched a SuiteID filter: %+v, %v", got, err)
+	}
+
+	// A SuiteID-less filter still sees every line (back-compat).
+	got, err = LatestReceipt(logPath, Receipt{Verdict: "PASS"})
+	if err != nil || got == nil || got.RunID != "ru" {
+		t.Fatalf("unscoped lookup = %+v, %v; want ru (newest)", got, err)
+	}
+
+	// Round trip: suite_id survives the JSON log.
+	if got.SuiteID != "real-usage-v1" {
+		t.Fatalf("suite_id round trip = %q; want real-usage-v1", got.SuiteID)
+	}
+}
+
 func TestLatestReceiptMissingLogAndCorruptLine(t *testing.T) {
 	got, err := LatestReceipt(filepath.Join(t.TempDir(), "nope.log"), Receipt{})
 	if err != nil || got != nil {
