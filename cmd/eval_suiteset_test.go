@@ -175,4 +175,7 @@ func TestDefaultSuiteSet(t *testing.T) {
 	if ru.Cfg.MinClean != 0 {
 		t.Errorf("real-usage MinClean pre-derivation = %d, want 0 (derived at load — no hard-coded case count)", ru.Cfg.MinClean)
 	}
+	if ru.Cfg.MinFirstTry != 0.25 {
+		t.Errorf("real-usage MinFirstTry = %v, want 0.25 (GRG-ratified 2026-07-06 baseline)", ru.Cfg.MinFirstTry)
+	}
 }

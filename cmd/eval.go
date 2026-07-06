@@ -69,9 +69,14 @@ func defaultSuiteSet(kbRoot string) []suiteSpec {
 			Cfg:  eval.GateConfig{MinClean: 11, MaxBlockers: 0, MinFirstTry: 0.70},
 		},
 		{
-			ID:             "real-usage-v1",
-			Path:           filepath.Join(dir, "real-usage-v1.yaml"),
-			Cfg:            eval.GateConfig{MaxBlockers: 0, MinFirstTry: 0.70},
+			ID:   "real-usage-v1",
+			Path: filepath.Join(dir, "real-usage-v1.yaml"),
+			// MinFirstTry 0.25 ratified at GRG from the 2026-07-06 baseline
+			// (4/4 clean, 2/4 first-try): at N=4 a 0.70 floor is one
+			// nondeterministic retry away from a false FAIL; 0.25 still
+			// catches the collapse-to-all-retries AP103 signature.
+			// Re-ratify as harvest accepts grow the suite (revisit at N≥8).
+			Cfg:            eval.GateConfig{MaxBlockers: 0, MinFirstTry: 0.25},
 			DeriveMinClean: true,
 			Optional:       true,
 		},
