@@ -121,7 +121,9 @@ func TestIsIndexableExt(t *testing.T) {
 }
 
 func TestShouldSkipDir(t *testing.T) {
-	for _, d := range []string{".git", "node_modules", "target", "dist", "build", ".idea", ".vscode", "v1"} {
+	// short-term = ledger + eval-run model output; indexing it puts model
+	// output into retrievable truth (D-BK9 breach found by the R6 spike).
+	for _, d := range []string{".git", "node_modules", "target", "dist", "build", ".idea", ".vscode", "v1", "short-term"} {
 		if !shouldSkipDir(d) {
 			t.Errorf("shouldSkipDir(%q) = false, want true", d)
 		}

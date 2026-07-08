@@ -37,6 +37,9 @@ func TestBuild_EndToEnd(t *testing.T) {
 	writeFile(t, filepath.Join(kb, "patterns", "ignore.txt"), "not indexed")
 	// Skipped dir.
 	writeFile(t, filepath.Join(kb, "node_modules", "junk.md"), "# junk\n")
+	// Ledger + eval-run output: model output must never become truth (D-BK9/D-DG1).
+	writeFile(t, filepath.Join(kb, "short-term", "turns", "t1.yaml"), "turn_id: t1\nrequest: model saw this\n")
+	writeFile(t, filepath.Join(kb, "short-term", "eval-runs", "r1", "c1", "output.yaml"), "challenge:\n  verdict: VALID\n")
 
 	// Repo CLAUDE.md.
 	writeFile(t, filepath.Join(root, "core-api", "CLAUDE.md"), "# core-api\n\n## Build\n\nmvn test\n")
@@ -82,6 +85,22 @@ func TestBuild_EndToEnd(t *testing.T) {
 	be, _ := os.ReadFile(filepath.Join(out, ScopeBackend+".ndjson"))
 	if !strings.Contains(string(be), "core-api/CLAUDE.md") {
 		t.Errorf("repo CLAUDE.md not indexed into backend scope:\n%s", be)
+	}
+
+	// The firewall: nothing under short-term/ (ledger, eval-run model
+	// output) may appear in ANY scope's chunks or the manifest (D-DG1).
+	manifest, _ := os.ReadFile(filepath.Join(out, "manifest.yaml"))
+	if strings.Contains(string(manifest), "short-term/") {
+		t.Errorf("manifest indexes short-term/ sources:\n%s", manifest)
+	}
+	for _, scope := range AllScopes {
+		nd, err := os.ReadFile(filepath.Join(out, scope+".ndjson"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(nd), "short-term/") {
+			t.Errorf("%s scope chunked short-term/ content", scope)
+		}
 	}
 }
 
