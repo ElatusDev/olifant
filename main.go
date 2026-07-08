@@ -47,6 +47,8 @@ func main() {
 		os.Exit(cmd.Harvest(args))
 	case "retrieve":
 		os.Exit(cmd.Retrieve(args))
+	case "digest":
+		os.Exit(cmd.Digest(args))
 	case "history":
 		os.Exit(cmd.History(args))
 	case "dataset":
@@ -81,6 +83,7 @@ SUBCOMMANDS:
   run          --plan <file> — execute a prompt-plan via PSP runner
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
+  digest       <path> — cite-gated, SHA-cached local-model summary of one artifact
   history      scan — walk repo commit history and emit JSONL training data
   dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB
   embedder     train | pull | ls — Phase B1b domain-embedder training on Modal

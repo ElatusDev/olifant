@@ -24,6 +24,7 @@ type TurnRecord struct {
 	PromptCheck   *PromptCheckBlock   `yaml:"prompt_check,omitempty"`
 	Retrieve      *RetrieveBlock      `yaml:"retrieve,omitempty"`
 	Validate      *ValidateBlock      `yaml:"validate,omitempty"`
+	Digest        *DigestBlock        `yaml:"digest,omitempty"`
 
 	Performance PerformanceBlock `yaml:"performance"`
 }
@@ -70,6 +71,20 @@ type RetrieveBlock struct {
 	Sources        []string `yaml:"sources,omitempty"`
 	PayloadBytes   int      `yaml:"payload_bytes,omitempty"`
 	SourceBytes    int64    `yaml:"source_bytes,omitempty"`
+}
+
+// DigestBlock captures one `digest` run (charter R6): the compaction
+// measurement plus the validation verdict; cache hits are recorded too so
+// digest usage is fully labelable (D-DG4).
+type DigestBlock struct {
+	Source    string  `yaml:"source"`
+	SourceSHA string  `yaml:"source_sha"`
+	BytesIn   int     `yaml:"bytes_in"`
+	BytesOut  int     `yaml:"bytes_out"`
+	Ratio     float64 `yaml:"ratio"`
+	CacheHit  bool    `yaml:"cache_hit,omitempty"`
+	Attempts  int     `yaml:"attempts,omitempty"`
+	Model     string  `yaml:"model,omitempty"`
 }
 
 // ValidateBlock — placeholder for the upcoming validate subcommand.
