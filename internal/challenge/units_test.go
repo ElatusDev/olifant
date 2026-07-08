@@ -204,3 +204,91 @@ func TestCitesSchema_WithValidator(t *testing.T) {
 		t.Errorf("cites schema type = %v, want array", schema["type"])
 	}
 }
+
+// TestFileExists_ResolvesAgainstKBRootNotSymlink is the olifant#71 regression:
+// a KB path cite must resolve against the validator's own kbRoot (the tree it
+// was built from), NOT platformRoot/knowledge-base. We prove it by making the
+// two trees DISAGREE — the cited file exists only under kbRoot — which is
+// exactly the stale-shared-checkout scenario that false-failed real-usage.
+func TestFileExists_ResolvesAgainstKBRootNotSymlink(t *testing.T) {
+	platformRoot := t.TempDir()
+	kbRoot := t.TempDir() // deliberately NOT platformRoot/knowledge-base
+
+	// The cited doc exists only under kbRoot.
+	rel := "workflows/olifant/completed/outcome-labeling-v1-workflow.md"
+	p := filepath.Join(kbRoot, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("# doc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A distractor symlink tree that LACKS it (the stale checkout).
+	staleKB := filepath.Join(platformRoot, "knowledge-base")
+	if err := os.MkdirAll(staleKB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := NewCiteValidator(platformRoot, kbRoot)
+	if err != nil {
+		t.Fatalf("NewCiteValidator: %v", err)
+	}
+	if !v.fileExists(rel) {
+		t.Errorf("bare KB path did not resolve against kbRoot (the olifant#71 bug)")
+	}
+	if !v.fileExists("knowledge-base/" + rel) {
+		t.Errorf("knowledge-base/-prefixed KB path did not resolve against kbRoot")
+	}
+	if v.fileExists("workflows/olifant/completed/does-not-exist.md") {
+		t.Errorf("nonexistent KB path resolved — false positive")
+	}
+}
+
+// TestFileExists_RepoCitesResolveViaPlatformRoot guards AC2: repo path cites
+// (core-api/..., which live under the platform root, not the KB) must keep
+// resolving against platformRoot even after the kbRoot change.
+func TestFileExists_RepoCitesResolveViaPlatformRoot(t *testing.T) {
+	platformRoot := t.TempDir()
+	kbRoot := t.TempDir()
+
+	repoFile := filepath.Join(platformRoot, "core-api", "src", "Foo.java")
+	if err := os.MkdirAll(filepath.Dir(repoFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoFile, []byte("class Foo {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := NewCiteValidator(platformRoot, kbRoot)
+	if err != nil {
+		t.Fatalf("NewCiteValidator: %v", err)
+	}
+	if !v.fileExists("core-api/src/Foo.java") {
+		t.Errorf("repo cite did not resolve via platformRoot")
+	}
+	// kbRoot/core-api/... doesn't exist → must not false-positive off the kbRoot candidate.
+	if v.fileExists("core-api/src/Missing.java") {
+		t.Errorf("missing repo file resolved — false positive")
+	}
+}
+
+// TestFileExists_EmptyKBRootFallsBackToSymlink keeps the backward-compat path:
+// a validator built with kbRoot=="" still resolves KB cites via
+// platformRoot/knowledge-base (D-EV1 fallback, D-EV3 default-unchanged).
+func TestFileExists_EmptyKBRootFallsBackToSymlink(t *testing.T) {
+	platformRoot := t.TempDir()
+	rel := "decisions/log.md"
+	p := filepath.Join(platformRoot, "knowledge-base", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("### D1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := NewCiteValidator(platformRoot, "")
+	if err != nil {
+		t.Fatalf("NewCiteValidator: %v", err)
+	}
+	if !v.fileExists(rel) {
+		t.Errorf("empty-kbRoot validator lost the platformRoot/knowledge-base fallback")
+	}
+}

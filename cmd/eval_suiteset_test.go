@@ -179,3 +179,47 @@ func TestDefaultSuiteSet(t *testing.T) {
 		t.Errorf("real-usage MinFirstTry = %v, want 0.25 (GRG-ratified 2026-07-06 baseline)", ru.Cfg.MinFirstTry)
 	}
 }
+
+// TestResolveRoots_KBRootOverride covers D-EV2 (olifant#71): -kb-root
+// overrides kbRoot only; platformRoot stays the real findUp root.
+func TestResolveRoots_KBRootOverride(t *testing.T) {
+	kb := kbTreeChdir(t) // chdirs into a temp platform tree; findUp resolves it
+	defaultKB, platformRoot := resolveRoots("")
+	if defaultKB != kb {
+		t.Errorf("default kbRoot = %q, want findUp %q", defaultKB, kb)
+	}
+	if platformRoot != filepath.Dir(kb) {
+		t.Errorf("platformRoot = %q, want %q", platformRoot, filepath.Dir(kb))
+	}
+
+	// Override points kbRoot elsewhere; platformRoot must NOT move.
+	other := t.TempDir()
+	ovKB, ovPlatform := resolveRoots(other)
+	if ovKB != other {
+		t.Errorf("overridden kbRoot = %q, want %q", ovKB, other)
+	}
+	if ovPlatform != platformRoot {
+		t.Errorf("platformRoot moved with -kb-root: %q != %q (repo cites would break)", ovPlatform, platformRoot)
+	}
+}
+
+// TestEvalGate_KBRootFlagResolvesSuites: -kb-root makes the gate read its
+// suite set + corpus manifest from the pinned tree, not the cwd's symlink.
+func TestEvalGate_KBRootFlagResolvesSuites(t *testing.T) {
+	kbTreeChdir(t)       // cwd tree has NO suites → default would fail to load
+	pinned := t.TempDir() // the pinned KB tree, populated with a suite + manifest
+	if err := os.MkdirAll(filepath.Join(pinned, "eval", "suites"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(pinned, "corpus", "v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(pinned, "corpus", "v1", "manifest.yaml"), []byte("total_chunks: 0\n"), 0o644)
+	writeSuiteN(t, filepath.Join(pinned, "eval", "suites", "code-feeding-v2.yaml"), "code-feeding-v2", 12)
+	writeSuiteN(t, filepath.Join(pinned, "eval", "suites", "real-usage-v1.yaml"), "real-usage-v1", 2)
+	fakeStack(t, challengeJSON)
+
+	if code := evalGate([]string{"-kb-root", pinned}); code != gateExitPass {
+		t.Fatalf("eval gate -kb-root = %d, want %d (PASS from the pinned tree)", code, gateExitPass)
+	}
+}
