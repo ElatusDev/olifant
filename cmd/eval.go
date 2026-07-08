@@ -97,15 +97,12 @@ func evalGate(args []string) int {
 	verbose := fs.Bool("v", false, "verbose progress")
 	timeoutSec := fs.Int("timeout", 3600, "per-suite timeout in seconds")
 	notify := fs.Bool("notify", false, "nightly mode: append to drift.log; macOS notification on FAIL (D-EG5)")
+	kbRootFlag := fs.String("kb-root", "", "resolve suites, corpus manifest, and cite validation against this KB tree (default: findUp); pin to a clean checkout when the shared knowledge-base symlink is on a foreign branch (olifant#71)")
 	_ = fs.Parse(args)
 
-	kbRoot, platformRoot := "", ""
-	if found, ok := findUp("knowledge-base/README.md"); ok {
-		kbRoot = filepath.Dir(found)
-		platformRoot = filepath.Dir(kbRoot)
-	}
+	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
 	if kbRoot == "" {
-		fmt.Fprintln(os.Stderr, "olifant eval gate: kb-root not found (run from the platform tree)")
+		fmt.Fprintln(os.Stderr, "olifant eval gate: kb-root not found (run from the platform tree, or pass -kb-root)")
 		return gateExitUsage
 	}
 
@@ -318,6 +315,26 @@ func gateOneSuite(env gateEnv, spec suiteSpec, reportDir string, preflighted boo
 	return gateExitPass
 }
 
+// resolveRoots returns (kbRoot, platformRoot). platformRoot is ALWAYS the real
+// platform root from findUp (so repo-path cites resolve correctly). kbRoot is
+// findUp by default, or the -kb-root override when set — letting a gate pin
+// cite validation + suite/manifest reads to a clean checkout while the shared
+// knowledge-base symlink is on a foreign branch (olifant#71 / D-EV2).
+func resolveRoots(kbRootFlag string) (kbRoot, platformRoot string) {
+	if found, ok := findUp("knowledge-base/README.md"); ok {
+		kbRoot = filepath.Dir(found)
+		platformRoot = filepath.Dir(kbRoot)
+	}
+	if kbRootFlag != "" {
+		if abs, err := filepath.Abs(kbRootFlag); err == nil {
+			kbRoot = abs
+		} else {
+			kbRoot = kbRootFlag
+		}
+	}
+	return kbRoot, platformRoot
+}
+
 // driftLog appends a three-state (PASS/FAIL/SKIPPED) line to the nightly
 // drift log (D-EG5).
 func driftLog(state, detail string) {
@@ -349,14 +366,12 @@ func notifyMac(title, message string) {
 func evalGateCheck(args []string) int {
 	fs := flag.NewFlagSet("eval gate-check", flag.ExitOnError)
 	suitePath := fs.String("suite", "", "single suite YAML (default: the full suite set under <kb-root>/eval/suites/)")
+	kbRootFlag := fs.String("kb-root", "", "resolve suites + corpus manifest against this KB tree (default: findUp; olifant#71)")
 	_ = fs.Parse(args)
 
-	kbRoot := ""
-	if found, ok := findUp("knowledge-base/README.md"); ok {
-		kbRoot = filepath.Dir(found)
-	}
+	kbRoot, _ := resolveRoots(*kbRootFlag)
 	if kbRoot == "" {
-		fmt.Fprintln(os.Stderr, "olifant eval gate-check: kb-root not found")
+		fmt.Fprintln(os.Stderr, "olifant eval gate-check: kb-root not found (run from the platform tree, or pass -kb-root)")
 		return gateExitUsage
 	}
 	specs := defaultSuiteSet(kbRoot)
