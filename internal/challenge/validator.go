@@ -66,7 +66,13 @@ type CiteValidator struct {
 	// retry hints. `business` is the apex scope, always included.
 	termsByLayerScope map[Layer]map[string][]string
 	platformRoot      string
-	repoPrefixes      []string
+	// kbRoot is the knowledge-base tree this validator was constructed with
+	// (the same tree its layers loaded from). KB path cites resolve against
+	// it — NOT via platformRoot/knowledge-base (the shared symlink) — so the
+	// gate is deterministic w.r.t. the tree it is given, not the branch the
+	// symlink happens to point at (olifant#71 / AP171).
+	kbRoot       string
+	repoPrefixes []string
 }
 
 // ApexScope is the business-domain layer that's always loaded regardless of
@@ -84,6 +90,7 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 		knownTerms:        map[string]struct{}{},
 		termsByLayerScope: map[Layer]map[string][]string{},
 		platformRoot:      platformRoot,
+		kbRoot:            kbRoot,
 		repoPrefixes: []string{
 			"core-api", "akademia-plus-web", "elatusdev-web",
 			"akademia-plus-central", "akademia-plus-go",
@@ -566,11 +573,21 @@ func (v *CiteValidator) looksLikeFilePath(s string) bool {
 }
 
 func (v *CiteValidator) fileExists(relPath string) bool {
-	// Try the platform root first; then knowledge-base/ for raw KB-relative paths.
-	candidates := []string{
+	// KB path cites resolve against the pinned kbRoot (olifant#71): the tree
+	// this validator loaded its layers from and the tree the corpus manifest
+	// describes — never the shared platformRoot/knowledge-base symlink, whose
+	// branch we don't control. A leading "knowledge-base/" prefix is stripped
+	// so both bare (decisions/log.md) and prefixed (knowledge-base/...) shapes
+	// hit the same tree. Repo cites (core-api/...) resolve against platformRoot.
+	// The symlink stays a last-resort fallback for the empty-kbRoot case.
+	var candidates []string
+	if v.kbRoot != "" {
+		candidates = append(candidates, filepath.Join(v.kbRoot, strings.TrimPrefix(relPath, "knowledge-base/")))
+	}
+	candidates = append(candidates,
 		filepath.Join(v.platformRoot, relPath),
 		filepath.Join(v.platformRoot, "knowledge-base", relPath),
-	}
+	)
 	for _, abs := range candidates {
 		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
 			return true
