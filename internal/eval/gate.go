@@ -147,9 +147,14 @@ func LoadReport(runDir string) (*Report, error) {
 }
 
 // Receipt records one gate evaluation. Staleness is detected by comparing
-// GitSHA + SuiteSHA + CorpusSHA against the current state (IA4).
+// GitSHA + SuiteSHA + CorpusSHA against the current state (IA4). SuiteID is
+// the suite's stable identity (D-RG2): SuiteSHA answers "is this receipt
+// fresh", SuiteID answers "whose lineage is this" — baseline lookups filter
+// by SuiteID so a PASS from one suite is never another suite's baseline.
+// Pre-HV-F1 lines carry no suite_id and never match a SuiteID filter.
 type Receipt struct {
 	Verdict        string `json:"verdict" yaml:"verdict"` // PASS | FAIL | SKIPPED | OVERRIDE
+	SuiteID        string `json:"suite_id,omitempty" yaml:"suite_id,omitempty"`
 	GitSHA         string `json:"git_sha" yaml:"git_sha"`
 	SuiteSHA       string `json:"suite_sha256" yaml:"suite_sha256"`
 	CorpusSHA      string `json:"corpus_manifest_sha256" yaml:"corpus_manifest_sha256"`
@@ -191,7 +196,7 @@ func WriteReceipt(runDir, logPath string, r Receipt) error {
 }
 
 // LatestReceipt returns the newest receipt in logPath matching every
-// non-empty filter field (Verdict, GitSHA, SuiteSHA, CorpusSHA). Returns
+// non-empty filter field (Verdict, SuiteID, GitSHA, SuiteSHA, CorpusSHA). Returns
 // (nil, nil) when no entry matches or the log does not exist.
 func LatestReceipt(logPath string, filter Receipt) (*Receipt, error) {
 	raw, err := os.ReadFile(logPath)
@@ -211,6 +216,9 @@ func LatestReceipt(logPath string, filter Receipt) (*Receipt, error) {
 			continue // tolerate a corrupt line; keep scanning
 		}
 		if filter.Verdict != "" && r.Verdict != filter.Verdict {
+			continue
+		}
+		if filter.SuiteID != "" && r.SuiteID != filter.SuiteID {
 			continue
 		}
 		if filter.GitSHA != "" && r.GitSHA != filter.GitSHA {
