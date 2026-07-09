@@ -315,3 +315,32 @@ func newClientFor(t *testing.T, h http.HandlerFunc, tenant, database string) *Cl
 	t.Cleanup(srv.Close)
 	return New(srv.URL, tenant, database)
 }
+
+func TestDeleteWhere(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]interface{}
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	})
+	defer srv.Close()
+
+	err := c.DeleteWhere(context.Background(), "coll-1", map[string]interface{}{"source": "workflows/x.md"})
+	if err != nil {
+		t.Fatalf("DeleteWhere: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/collections/coll-1/delete") {
+		t.Errorf("path = %q, want .../collections/coll-1/delete", gotPath)
+	}
+	where, _ := gotBody["where"].(map[string]interface{})
+	if where["source"] != "workflows/x.md" {
+		t.Errorf("where = %v, want source filter", gotBody)
+	}
+
+	// Refuses an empty filter — a collection-wide delete must be explicit
+	// (drop the collection), never an accidental empty where.
+	if err := c.DeleteWhere(context.Background(), "coll-1", nil); err == nil {
+		t.Error("empty where must refuse")
+	}
+}
