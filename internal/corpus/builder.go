@@ -1,6 +1,8 @@
 package corpus
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,7 +85,35 @@ func Build(cfg Config) error {
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return err
 	}
+	scoped, manifest, err := buildCorpus(cfg)
+	if err != nil {
+		return err
+	}
+	for _, scope := range AllScopes {
+		outPath := filepath.Join(cfg.OutDir, scope+".ndjson")
+		if err := writeNDJSON(outPath, scoped[scope]); err != nil {
+			return fmt.Errorf("write %s: %w", outPath, err)
+		}
+	}
+	manifestPath := filepath.Join(cfg.OutDir, "manifest.yaml")
+	if err := writeManifest(manifestPath, manifest); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
 
+	// Summary
+	fmt.Printf("corpus v1 built at %s\n", cfg.OutDir)
+	fmt.Printf("  total chunks: %d across %d sources\n", manifest.TotalChunks, len(manifest.Sources))
+	for _, scope := range AllScopes {
+		fmt.Printf("  %-18s %d chunks\n", scope, manifest.ByScope[scope])
+	}
+	return nil
+}
+
+// buildCorpus walks the configured sources and returns the per-scope chunks
+// (deterministically sorted) plus the manifest — WITHOUT writing anything.
+// Build writes the result; Sync diffs it against the previously-landed
+// manifest (olifant#77 D-CS2).
+func buildCorpus(cfg Config) (map[string][]Chunk, Manifest, error) {
 	// Load source SHAs once per repo root.
 	kbSHAs, _ := gitLsFilesSHAs(cfg.KBRoot)
 
@@ -125,6 +155,11 @@ func Build(cfg Config) error {
 		}
 		docType := docTypeForPath(rel, ext)
 		sha := kbSHAs[rel]
+		if sha == "" {
+			// Not in the git index (non-repo fixture, or an untracked file):
+			// content-hash so the source stays diffable for `corpus sync`.
+			sha = contentSHA(path)
+		}
 
 		chunks, err := chunkOne(path, rel, scope, docType, ext, sha)
 		if err != nil {
@@ -141,7 +176,7 @@ func Build(cfg Config) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk kb: %w", err)
+		return nil, Manifest{}, fmt.Errorf("walk kb: %w", err)
 	}
 
 	// 2) Repo CLAUDE.md files
@@ -162,6 +197,9 @@ func Build(cfg Config) error {
 		rel := filepath.ToSlash(filepath.Join(rd, "CLAUDE.md"))
 		repoSHAs, _ := gitLsFilesSHAs(filepath.Join(cfg.PlatformRoot, rd))
 		sha := repoSHAs["CLAUDE.md"]
+		if sha == "" {
+			sha = contentSHA(claudePath)
+		}
 		chunks, err := chunkMarkdown(claudePath, rel, scope, "claude_md", sha)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warn: %s: %v\n", rel, err)
@@ -192,7 +230,11 @@ func Build(cfg Config) error {
 			}
 			rel, _ := filepath.Rel(cfg.MemoryRoot, path)
 			rel = filepath.ToSlash(filepath.Join("memory", rel))
-			chunks, err := chunkMarkdown(path, rel, ScopePlatformProcess, "memory", "")
+			// Memory lives outside any git repo, so there is no ls-files
+			// SHA. Content-hash instead — an empty SHA would make memory
+			// sources undiffable for `corpus sync` (olifant#77).
+			sha := contentSHA(path)
+			chunks, err := chunkMarkdown(path, rel, ScopePlatformProcess, "memory", sha)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  warn: %s: %v\n", rel, err)
 				return nil
@@ -202,7 +244,7 @@ func Build(cfg Config) error {
 			}
 			scoped[ScopePlatformProcess] = append(scoped[ScopePlatformProcess], chunks...)
 			sourcesMeta = append(sourcesMeta, SourceManifest{
-				Path: rel, SHA: "", Scope: ScopePlatformProcess, DocType: "memory", Chunks: len(chunks),
+				Path: rel, SHA: sha, Scope: ScopePlatformProcess, DocType: "memory", Chunks: len(chunks),
 			})
 			return nil
 		})
@@ -233,7 +275,7 @@ func Build(cfg Config) error {
 		}
 	}
 
-	// Sort each scope deterministically, then write
+	// Sort each scope deterministically and tally.
 	byScope := make(map[string]int, len(AllScopes))
 	byDocType := make(map[string]int)
 	total := 0
@@ -245,10 +287,6 @@ func Build(cfg Config) error {
 			}
 			return cs[i].SourceAnchor < cs[j].SourceAnchor
 		})
-		outPath := filepath.Join(cfg.OutDir, scope+".ndjson")
-		if err := writeNDJSON(outPath, cs); err != nil {
-			return fmt.Errorf("write %s: %w", outPath, err)
-		}
 		byScope[scope] = len(cs)
 		for _, c := range cs {
 			byDocType[c.DocType]++
@@ -256,7 +294,6 @@ func Build(cfg Config) error {
 		total += len(cs)
 	}
 
-	// Manifest
 	sort.Slice(sourcesMeta, func(i, j int) bool { return sourcesMeta[i].Path < sourcesMeta[j].Path })
 	manifest := Manifest{
 		BuiltAt:        nowISO(),
@@ -266,18 +303,18 @@ func Build(cfg Config) error {
 		ByDocType:      byDocType,
 		Sources:        sourcesMeta,
 	}
-	manifestPath := filepath.Join(cfg.OutDir, "manifest.yaml")
-	if err := writeManifest(manifestPath, manifest); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
+	return scoped, manifest, nil
+}
 
-	// Summary
-	fmt.Printf("corpus v1 built at %s\n", cfg.OutDir)
-	fmt.Printf("  total chunks: %d across %d sources\n", total, len(sourcesMeta))
-	for _, scope := range AllScopes {
-		fmt.Printf("  %-18s %d chunks\n", scope, byScope[scope])
+// contentSHA returns the hex SHA-1 of a file's contents (empty on error) —
+// the change-detection key for sources that live outside any git repo.
+func contentSHA(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
 	}
-	return nil
+	sum := sha1.Sum(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // chunkOne dispatches to the right chunker based on extension and source kind.
