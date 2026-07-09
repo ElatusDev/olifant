@@ -106,7 +106,7 @@ func Index(ctx context.Context, cfg IndexConfig) (IndexStats, error) {
 			continue
 		}
 
-		collName := "corpus_" + strings.ReplaceAll(scope, "-", "_")
+		collName := collectionName(scope)
 		coll, err := cc.EnsureCollection(ctx, collName, map[string]interface{}{
 			"hnsw:space":    "cosine",
 			"olifant_scope": scope,
@@ -306,4 +306,10 @@ func discoverScopes(corpusDir string, only []string) ([]string, error) {
 		scopes = append(scopes, strings.TrimSuffix(name, ".ndjson"))
 	}
 	return scopes, nil
+}
+
+// collectionName maps a scope to its v1 corpus collection (shared by the
+// full indexer and the incremental sync, olifant#77).
+func collectionName(scope string) string {
+	return "corpus_" + strings.ReplaceAll(scope, "-", "_")
 }

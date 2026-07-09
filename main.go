@@ -73,7 +73,7 @@ USAGE:
   olifant <subcommand> [args]
 
 SUBCOMMANDS:
-  corpus       build | index — manage the knowledge-base corpus
+  corpus       build | sync | status | index — manage the knowledge-base corpus (sync = incremental re-index; status = freshness drift)
   dictionary   bootstrap — manage the CNL dictionary
   repo         ingest — chunk + embed source from the 7 platform repos
   challenge    challenge "<request>" — step 0: produce a verdict in YAML

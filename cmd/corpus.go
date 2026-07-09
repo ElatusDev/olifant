@@ -29,7 +29,7 @@ import (
 // Chroma collection with tag-axis metadata preserved.
 func Corpus(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|index|index-v2|scan|prose|classify|stats)")
+		fmt.Fprintln(os.Stderr, "olifant corpus: missing action (build|sync|status|index|index-v2|scan|prose|classify|stats)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -37,6 +37,10 @@ func Corpus(args []string) int {
 	switch action {
 	case "build":
 		return corpusBuild(rest)
+	case "sync":
+		return corpusSync(rest)
+	case "status":
+		return corpusStatus(rest)
 	case "index":
 		return corpusIndex(rest)
 	case "index-v2":
@@ -453,6 +457,121 @@ func corpusClassify(args []string) int {
 	}
 	fmt.Printf("\nclassify totals: %d/%d sentences classified across %d ok batches (%d failed) in %s\n",
 		totalOut, totalIn, totalOK, totalFail, time.Since(startAll).Round(time.Second))
+	return 0
+}
+
+// corpusSync implements `olifant corpus sync` (olifant#77, D-CS2): the
+// incremental re-index — manifest diff → delete-by-source → embed only
+// added/changed. Honors -kb-root/OLIFANT_KB_ROOT (D-CS7) and passes the REAL
+// platform root explicitly: a pinned worktree's parent is worktrees/, not the
+// platform, and repo CLAUDE.md walking must not follow the pin.
+func corpusSync(args []string) int {
+	fs := flag.NewFlagSet("corpus sync", flag.ExitOnError)
+	kbRootFlag := fs.String("kb-root", "", "KB tree to sync (default: OLIFANT_KB_ROOT, then findUp)")
+	memoryRoot := fs.String("memory-root", "", "memory directory (default: $HOME/.claude/projects/.../memory)")
+	batchSize := fs.Int("batch", 32, "chunks per embed/upsert batch")
+	dryRun := fs.Bool("dry-run", false, "diff + report only; no deletes, embeds, or writes")
+	verbose := fs.Bool("v", false, "verbose progress")
+	timeoutSec := fs.Int("timeout", 1800, "overall timeout in seconds")
+	_ = fs.Parse(args)
+
+	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
+	if kbRoot == "" {
+		fmt.Fprintln(os.Stderr, "corpus sync: kb-root not found (run from the platform tree, or pass -kb-root)")
+		return 2
+	}
+	cfg, err := corpus.ResolveConfig(corpus.Config{
+		KBRoot: kbRoot, PlatformRoot: platformRoot, MemoryRoot: *memoryRoot, Verbose: *verbose,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus sync:", err)
+		return 1
+	}
+
+	rt := config.Resolve()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
+	defer cancel()
+
+	rep, err := corpus.Sync(ctx, corpus.SyncConfig{
+		Config:    cfg,
+		OllamaURL: rt.OllamaURL,
+		ChromaURL: rt.ChromaURL,
+		Embedder:  rt.Embedder,
+		Tenant:    rt.ChromaTenant,
+		Database:  rt.ChromaDatabase,
+		BatchSize: *batchSize,
+		DryRun:    *dryRun,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus sync:", err)
+		return 1
+	}
+
+	mode := "synced"
+	switch {
+	case rep.NoOp:
+		mode = "no-op (index already current; nothing written)"
+	case *dryRun:
+		mode = "dry-run (nothing touched)"
+	}
+	fmt.Printf("corpus sync %s — added=%d changed=%d removed=%d chunks_embedded=%d elapsed=%s kb_root=%s\n",
+		mode, rep.Added, rep.Changed, rep.Removed, rep.ChunksEmbedded,
+		(time.Duration(rep.ElapsedMs) * time.Millisecond).Round(time.Millisecond), cfg.KBRoot)
+	return 0
+}
+
+// corpusStatus implements `olifant corpus status` (olifant#77, D-CS6): the
+// freshness observable — index age + source drift vs the KB tree. The diff
+// half is offline; -chroma adds live per-scope collection counts.
+func corpusStatus(args []string) int {
+	fs := flag.NewFlagSet("corpus status", flag.ExitOnError)
+	kbRootFlag := fs.String("kb-root", "", "KB tree to compare (default: OLIFANT_KB_ROOT, then findUp)")
+	memoryRoot := fs.String("memory-root", "", "memory directory (default: $HOME/.claude/projects/.../memory)")
+	withChroma := fs.Bool("chroma", false, "also report live per-scope collection counts")
+	_ = fs.Parse(args)
+
+	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
+	if kbRoot == "" {
+		fmt.Fprintln(os.Stderr, "corpus status: kb-root not found (run from the platform tree, or pass -kb-root)")
+		return 2
+	}
+	cfg, err := corpus.ResolveConfig(corpus.Config{
+		KBRoot: kbRoot, PlatformRoot: platformRoot, MemoryRoot: *memoryRoot,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus status:", err)
+		return 1
+	}
+
+	rep, err := corpus.Status(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "corpus status:", err)
+		return 1
+	}
+	fmt.Printf("corpus status — kb_root=%s\n", cfg.KBRoot)
+	fmt.Printf("  indexed:  built_at=%s builder=%s sources=%d chunks=%d\n",
+		rep.BuiltAt, rep.BuilderVersion, rep.IndexedSources, rep.IndexedChunks)
+	fmt.Printf("  drift:    added=%d changed=%d removed=%d (total %d)\n",
+		rep.Added, rep.Changed, rep.Removed, rep.Added+rep.Changed+rep.Removed)
+	if rep.VersionDrift {
+		fmt.Println("  WARNING:  builder version drift — sync will refuse; full drop-and-rebuild required (AP179 recipe)")
+	}
+	if *withChroma {
+		rt := config.Resolve()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		counts, cerr := corpus.LiveCounts(ctx, rt.ChromaURL, rt.ChromaTenant, rt.ChromaDatabase)
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "  chroma:   unreachable (%v)\n", cerr)
+		} else {
+			for _, sc := range corpus.AllScopes {
+				fmt.Printf("  chroma:   %-18s %d\n", sc, counts[sc])
+			}
+		}
+	}
+	if rep.Added+rep.Changed+rep.Removed > 0 {
+		return 1 // drift present — scriptable signal (nightly's cheap guard)
+	}
 	return 0
 }
 

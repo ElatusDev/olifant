@@ -57,4 +57,37 @@ err=$(git -C "$KBWT" checkout --detach origin/main --quiet 2>&1) || skip "kb wor
 
 cd "$WT" || skip "worktree cd failed"
 err=$(/opt/homebrew/bin/go build -o bin/olifant . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
+
+# Corpus freshness (olifant#77, D-CS4/D-CS5): sync the index incrementally
+# against the pinned tree, land the manifest via auto-PR + self-merge, THEN
+# gate — receipts fingerprint the pinned tree's freshly-written manifest, so
+# they stay consistent with the indexed state even if the PR step fails
+# (self-reported below; the next night's re-diff heals the lag).
+note() {
+    mkdir -p "$(dirname "$DRIFT")"
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DRIFT"
+}
+syncout=$(./bin/olifant corpus sync -kb-root "$KBWT" 2>&1) || note "SYNC FAILED: $(echo "$syncout" | tail -1)"
+echo "$syncout" | grep -q "corpus sync synced" && {
+    note "SYNC: $(echo "$syncout" | grep 'corpus sync' | tail -1)"
+    BR="ops/corpus-sync-nightly"
+    if pr_err=$( (git -C "$KBWT" checkout -B "$BR" \
+        && git -C "$KBWT" add corpus/v1/manifest.yaml \
+        && git -C "$KBWT" commit -m "ops(corpus): nightly incremental sync manifest" \
+        && git -C "$KBWT" push -f origin "$BR" \
+        && gh pr create --repo ElatusDev/platform-knowledge-base --head "$BR" \
+             --title "ops(corpus): nightly incremental sync manifest" \
+             --body "Automated nightly corpus sync (olifant#77 D-CS5)." 2>&1 \
+        ; for i in 1 2 3 4 5 6; do
+            m=$(gh pr view "$BR" --repo ElatusDev/platform-knowledge-base --json mergeable -q .mergeable 2>/dev/null)
+            [ "$m" = "MERGEABLE" ] && break; sleep 10
+          done \
+        && gh pr merge "$BR" --repo ElatusDev/platform-knowledge-base --squash --delete-branch) 2>&1 ); then
+        note "MANIFEST LANDED (auto-PR merged)"
+    else
+        note "MANIFEST PR FAILED (index ahead of main until next sync): $(echo "$pr_err" | tail -1)"
+    fi
+    git -C "$KBWT" checkout --detach HEAD --quiet 2>/dev/null || true
+}
+
 exec ./bin/olifant eval gate --notify -kb-root "$KBWT"

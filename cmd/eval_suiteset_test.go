@@ -255,3 +255,41 @@ func TestEvalGate_KBRootFlagResolvesSuites(t *testing.T) {
 		t.Fatalf("eval gate -kb-root = %d, want %d (PASS from the pinned tree)", code, gateExitPass)
 	}
 }
+
+// TestCorpusStatusAndSyncVerbs: status is the scriptable drift signal (exit 1
+// on drift, 0 clean); sync -dry-run reports without touching anything —
+// both honoring -kb-root (olifant#77 D-CS6/D-CS7).
+func TestCorpusStatusAndSyncVerbs(t *testing.T) {
+	kb := kbTreeChdir(t)
+	// Land a manifest matching the current (tiny) tree: a doc + full build.
+	if err := os.MkdirAll(filepath.Join(kb, "patterns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(kb, "patterns", "backend.md"), []byte("# P\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Corpus([]string{"build", "-kb-root", kb, "-memory-root", t.TempDir()}); code != 0 {
+		t.Fatalf("corpus build = %d", code)
+	}
+
+	// Clean → exit 0.
+	if code := Corpus([]string{"status", "-kb-root", kb, "-memory-root", t.TempDir()}); code != 0 {
+		t.Fatalf("status (clean) = %d, want 0", code)
+	}
+
+	// Drift → status exit 1; sync -dry-run reports and touches nothing.
+	if err := os.WriteFile(filepath.Join(kb, "patterns", "frontend.md"), []byte("# F\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Corpus([]string{"status", "-kb-root", kb, "-memory-root", t.TempDir()}); code != 1 {
+		t.Fatalf("status (drift) = %d, want 1", code)
+	}
+	before, _ := os.ReadFile(filepath.Join(kb, "corpus", "v1", "manifest.yaml"))
+	if code := Corpus([]string{"sync", "-kb-root", kb, "-memory-root", t.TempDir(), "-dry-run"}); code != 0 {
+		t.Fatalf("sync -dry-run = %d, want 0", code)
+	}
+	after, _ := os.ReadFile(filepath.Join(kb, "corpus", "v1", "manifest.yaml"))
+	if string(before) != string(after) {
+		t.Error("dry-run sync mutated the landed manifest")
+	}
+}

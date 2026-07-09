@@ -142,6 +142,23 @@ func (c *Client) Upsert(ctx context.Context, collectionID string, req UpsertRequ
 	return c.do(ctx, http.MethodPost, path, req, nil)
 }
 
+// ===== Delete =====
+
+// DeleteWhere removes every record whose metadata matches the where filter
+// (e.g. {"source": "workflows/x.md"}). The missing primitive behind AP179:
+// without it, changed/moved/removed sources orphan their chunks and the only
+// remedy is a full drop-and-rebuild. Generic by design — the corpus sync
+// engine and the RG-F4 family audits both key deletes on metadata.
+func (c *Client) DeleteWhere(ctx context.Context, collectionID string, where map[string]interface{}) error {
+	if len(where) == 0 {
+		return fmt.Errorf("chroma: DeleteWhere requires a non-empty where filter (refusing collection-wide delete)")
+	}
+	path := fmt.Sprintf("/api/v2/tenants/%s/databases/%s/collections/%s/delete",
+		url.PathEscape(c.Tenant), url.PathEscape(c.Database), url.PathEscape(collectionID))
+	body := map[string]interface{}{"where": where}
+	return c.do(ctx, http.MethodPost, path, body, nil)
+}
+
 // ===== Query =====
 
 // QueryRequest is a similarity query against a collection.
