@@ -203,10 +203,42 @@ func TestResolveRoots_KBRootOverride(t *testing.T) {
 	}
 }
 
+// TestResolveRoots_EnvPrecedence covers D-PG1 (olifant#74): precedence is
+// -kb-root flag > OLIFANT_KB_ROOT env > findUp, and the env — like the flag —
+// moves kbRoot only, never platformRoot.
+func TestResolveRoots_EnvPrecedence(t *testing.T) {
+	kb := kbTreeChdir(t)
+	envTree := t.TempDir()
+	flagTree := t.TempDir()
+
+	// Env set, no flag → env wins over findUp.
+	t.Setenv("OLIFANT_KB_ROOT", envTree)
+	gotKB, gotPlatform := resolveRoots("")
+	if gotKB != envTree {
+		t.Errorf("env override kbRoot = %q, want %q", gotKB, envTree)
+	}
+	if gotPlatform != filepath.Dir(kb) {
+		t.Errorf("platformRoot moved with the env: %q, want %q", gotPlatform, filepath.Dir(kb))
+	}
+
+	// Flag beats env.
+	gotKB, _ = resolveRoots(flagTree)
+	if gotKB != flagTree {
+		t.Errorf("flag should beat env: kbRoot = %q, want %q", gotKB, flagTree)
+	}
+
+	// Empty env → findUp (default unchanged).
+	t.Setenv("OLIFANT_KB_ROOT", "")
+	gotKB, _ = resolveRoots("")
+	if gotKB != kb {
+		t.Errorf("empty env should fall back to findUp: kbRoot = %q, want %q", gotKB, kb)
+	}
+}
+
 // TestEvalGate_KBRootFlagResolvesSuites: -kb-root makes the gate read its
 // suite set + corpus manifest from the pinned tree, not the cwd's symlink.
 func TestEvalGate_KBRootFlagResolvesSuites(t *testing.T) {
-	kbTreeChdir(t)       // cwd tree has NO suites → default would fail to load
+	kbTreeChdir(t)        // cwd tree has NO suites → default would fail to load
 	pinned := t.TempDir() // the pinned KB tree, populated with a suite + manifest
 	if err := os.MkdirAll(filepath.Join(pinned, "eval", "suites"), 0o755); err != nil {
 		t.Fatal(err)

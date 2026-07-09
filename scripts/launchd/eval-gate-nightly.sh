@@ -24,6 +24,13 @@
 set -u
 REPO="${OLIFANT_REPO:-/Volumes/elatusdev/platform/olifant}"
 WT="$(dirname "$REPO")/worktrees/olifant-eval-gate-nightly"
+# Self-pin the KB tree to origin/main (olifant#74 / D-PG2): findUp from the
+# olifant worktree resolves the shared knowledge-base symlink, which a
+# concurrent instance may have parked on a feature branch — false-failing the
+# drift backstop. A dedicated origin/main KB worktree, passed via -kb-root,
+# makes the nightly deterministic w.r.t. main regardless of the symlink.
+KBREPO="$(dirname "$REPO")/platform-knowledge-base"
+KBWT="$(dirname "$REPO")/worktrees/kb-eval-gate-nightly"
 DRIFT="$HOME/.olifant/eval-gate/drift.log"
 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 export PATH
@@ -40,6 +47,14 @@ if [ ! -d "$WT" ]; then
     err=$(git worktree add --detach "$WT" origin/main 2>&1) || skip "worktree add: $err"
 fi
 err=$(git -C "$WT" checkout --detach origin/main --quiet 2>&1) || skip "worktree checkout: $err"
+
+# Refresh the pinned KB worktree to origin/main (same discipline as the olifant one).
+err=$(git -C "$KBREPO" fetch origin main --quiet 2>&1) || skip "kb fetch: $err"
+if [ ! -d "$KBWT" ]; then
+    err=$(git -C "$KBREPO" worktree add --detach "$KBWT" origin/main 2>&1) || skip "kb worktree add: $err"
+fi
+err=$(git -C "$KBWT" checkout --detach origin/main --quiet 2>&1) || skip "kb worktree checkout: $err"
+
 cd "$WT" || skip "worktree cd failed"
 err=$(/opt/homebrew/bin/go build -o bin/olifant . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
-exec ./bin/olifant eval gate --notify
+exec ./bin/olifant eval gate --notify -kb-root "$KBWT"

@@ -29,5 +29,7 @@ fi
 
 echo "[eval-gate] BLOCKED: no fresh PASS receipt for HEAD." >&2
 echo "[eval-gate] remediation: commit, run 'olifant eval gate' (~15-30 min for the suite set), then push." >&2
-echo "[eval-gate] sanctioned override: OLIFANT_EVAL_GATE_SKIP=\"<reason>\" git push (audited)." >&2
+echo "[eval-gate] if the shared knowledge-base checkout is on another branch, mint + push with" >&2
+echo "[eval-gate]   OLIFANT_KB_ROOT=<clean-main-KB-checkout> (olifant#74) — this check inherits it." >&2
+echo "[eval-gate] sanctioned override (last resort): OLIFANT_EVAL_GATE_SKIP=\"<reason>\" git push (audited)." >&2
 exit 1

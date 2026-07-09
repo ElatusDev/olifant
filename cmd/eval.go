@@ -317,19 +317,25 @@ func gateOneSuite(env gateEnv, spec suiteSpec, reportDir string, preflighted boo
 
 // resolveRoots returns (kbRoot, platformRoot). platformRoot is ALWAYS the real
 // platform root from findUp (so repo-path cites resolve correctly). kbRoot is
-// findUp by default, or the -kb-root override when set — letting a gate pin
-// cite validation + suite/manifest reads to a clean checkout while the shared
-// knowledge-base symlink is on a foreign branch (olifant#71 / D-EV2).
+// resolved by precedence: the -kb-root flag > the OLIFANT_KB_ROOT env >
+// findUp (olifant#71 / D-EV2, olifant#74 / D-PG1). The env lets the pre-push
+// hook's bare `gate-check` and the minting `eval gate` agree on one pinned
+// clean checkout — without a per-call flag — while the shared knowledge-base
+// symlink is on a foreign branch. The env NEVER moves platformRoot.
 func resolveRoots(kbRootFlag string) (kbRoot, platformRoot string) {
 	if found, ok := findUp("knowledge-base/README.md"); ok {
 		kbRoot = filepath.Dir(found)
 		platformRoot = filepath.Dir(kbRoot)
 	}
-	if kbRootFlag != "" {
-		if abs, err := filepath.Abs(kbRootFlag); err == nil {
+	override := kbRootFlag
+	if override == "" {
+		override = os.Getenv("OLIFANT_KB_ROOT")
+	}
+	if override != "" {
+		if abs, err := filepath.Abs(override); err == nil {
 			kbRoot = abs
 		} else {
-			kbRoot = kbRootFlag
+			kbRoot = override
 		}
 	}
 	return kbRoot, platformRoot
