@@ -116,3 +116,56 @@ func TestContextAndCheckPathsImportNoSynth(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptCheck_KBRootPin covers olifant#79 (CS-F5): -kb-root (and the
+// OLIFANT_KB_ROOT env) resolve bare IDs against the PINNED tree — the
+// branch-new-artifact case — while repo path cites keep resolving via the
+// real platform root, and the default stays findUp.
+func TestPromptCheck_KBRootPin(t *testing.T) {
+	platformRoot := gateFixture(t) // findUp tree: knows D210/AP164 only
+
+	// A repo file under the REAL platform root (repo cites must keep working
+	// under a pin).
+	repoFile := filepath.Join(platformRoot, "core-api", "src", "Foo.java")
+	if err := os.MkdirAll(filepath.Dir(repoFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoFile, []byte("class Foo {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The pinned tree: a branch worktree that ALSO defines D999 (the
+	// "artifact minted on this branch" case).
+	pinned := t.TempDir()
+	for rel, body := range map[string]string{
+		"decisions/log.md":         "### D210 — a decision\n### D999 — minted on this branch\n",
+		"anti-patterns/catalog.md": "### AP164 — a trap\n",
+	} {
+		p := filepath.Join(pinned, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	doc := filepath.Join(platformRoot, "doc.md")
+	if err := os.WriteFile(doc, []byte("Per D999 (new) and core-api/src/Foo.java.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default (findUp tree lacks D999) → fail: the exact pre-fix friction.
+	if code := promptCheck([]string{"-no-record", doc}); code != 1 {
+		t.Errorf("default should fail on the branch-new ID: exit %d, want 1", code)
+	}
+	// Pinned via flag → both cites resolve in ONE invocation (AC4 shape).
+	if code := promptCheck([]string{"-no-record", "-kb-root", pinned, doc}); code != 0 {
+		t.Errorf("pinned check: exit %d, want 0", code)
+	}
+	// Pinned via env → same.
+	t.Setenv("OLIFANT_KB_ROOT", pinned)
+	if code := promptCheck([]string{"-no-record", doc}); code != 0 {
+		t.Errorf("env-pinned check: exit %d, want 0", code)
+	}
+}

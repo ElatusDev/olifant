@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,21 +23,23 @@ func promptCheck(args []string) int {
 	fs := flag.NewFlagSet("prompt check", flag.ExitOnError)
 	verbose := fs.Bool("v", false, "list resolved cites too, not just failures")
 	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
+	kbRootFlag := fs.String("kb-root", "", "resolve bare IDs + KB path cites against this KB tree (default: OLIFANT_KB_ROOT, then findUp) — pin to a branch worktree when the doc cites artifacts not yet on the shared checkout (olifant#79)")
 	_ = fs.Parse(args)
 
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "olifant prompt check: usage: olifant prompt check <doc.md>")
+		fmt.Fprintln(os.Stderr, "olifant prompt check: usage: olifant prompt check [-kb-root <tree>] <doc.md>")
 		return 2
 	}
 	docPath := fs.Arg(0)
 
-	found, ok := findUp("knowledge-base/README.md")
-	if !ok {
-		fmt.Fprintln(os.Stderr, "olifant prompt check: knowledge-base not found in cwd ancestors")
+	// Same tree-pinning lineage as the eval gate (D224/D227): the pin moves
+	// kbRoot only — repo path cites keep resolving against the REAL platform
+	// root from findUp (a pinned worktree's parent is not the platform).
+	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
+	if kbRoot == "" {
+		fmt.Fprintln(os.Stderr, "olifant prompt check: knowledge-base not found in cwd ancestors (or pass -kb-root)")
 		return 2
 	}
-	kbRoot := filepath.Dir(found)
-	platformRoot := filepath.Dir(kbRoot)
 
 	start := time.Now()
 	resolver, err := promptgate.NewResolver(platformRoot, kbRoot)
