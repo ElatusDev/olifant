@@ -153,3 +153,25 @@ func buildFailureModeExample(sourcePath string, fm failureModeEntry) Example {
 		Metadata: meta,
 	}
 }
+
+// LatestSource exposes the curated failure-modes source location + entry
+// count for the family-aware freshness observable (olifant#82, D-FF6).
+// Returns ("", 0, nil) when no source file exists.
+func LatestSource(kbRoot string) (path string, entries int, err error) {
+	dir := filepath.Join(kbRoot, failureModesDir)
+	p, err := pickLatestFailureModesFile(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	if p == "" {
+		return "", 0, nil
+	}
+	es, err := loadFailureModeEntries(p)
+	if err != nil {
+		return p, 0, err
+	}
+	return p, len(es), nil
+}

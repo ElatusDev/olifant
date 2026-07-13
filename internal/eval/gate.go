@@ -147,17 +147,22 @@ func LoadReport(runDir string) (*Report, error) {
 }
 
 // Receipt records one gate evaluation. Staleness is detected by comparing
-// GitSHA + SuiteSHA + CorpusSHA against the current state (IA4). SuiteID is
-// the suite's stable identity (D-RG2): SuiteSHA answers "is this receipt
-// fresh", SuiteID answers "whose lineage is this" — baseline lookups filter
-// by SuiteID so a PASS from one suite is never another suite's baseline.
-// Pre-HV-F1 lines carry no suite_id and never match a SuiteID filter.
+// GitSHA + SuiteSHA + CorpusSHA + RepoSHA against the current state (IA4).
+// SuiteID is the suite's stable identity (D-RG2): SuiteSHA answers "is this
+// receipt fresh", SuiteID answers "whose lineage is this" — baseline lookups
+// filter by SuiteID so a PASS from one suite is never another suite's
+// baseline. Pre-HV-F1 lines carry no suite_id and never match a SuiteID
+// filter. RepoSHA (olifant#82, GD-1b) fingerprints the code-family manifest:
+// pre-#82 receipts carry none and go STALE-by-shape once the manifest exists;
+// while no manifest exists the field is unconstrained (same best-effort
+// semantics as CorpusSHA).
 type Receipt struct {
 	Verdict        string `json:"verdict" yaml:"verdict"` // PASS | FAIL | SKIPPED | OVERRIDE
 	SuiteID        string `json:"suite_id,omitempty" yaml:"suite_id,omitempty"`
 	GitSHA         string `json:"git_sha" yaml:"git_sha"`
 	SuiteSHA       string `json:"suite_sha256" yaml:"suite_sha256"`
 	CorpusSHA      string `json:"corpus_manifest_sha256" yaml:"corpus_manifest_sha256"`
+	RepoSHA        string `json:"repo_manifest_sha256,omitempty" yaml:"repo_manifest_sha256,omitempty"`
 	RunID          string `json:"run_id,omitempty" yaml:"run_id,omitempty"`
 	RunDir         string `json:"run_dir,omitempty" yaml:"run_dir,omitempty"`
 	CleanCases     int    `json:"clean_cases" yaml:"clean_cases"`
@@ -196,8 +201,9 @@ func WriteReceipt(runDir, logPath string, r Receipt) error {
 }
 
 // LatestReceipt returns the newest receipt in logPath matching every
-// non-empty filter field (Verdict, SuiteID, GitSHA, SuiteSHA, CorpusSHA). Returns
-// (nil, nil) when no entry matches or the log does not exist.
+// non-empty filter field (Verdict, SuiteID, GitSHA, SuiteSHA, CorpusSHA,
+// RepoSHA). Returns (nil, nil) when no entry matches or the log does not
+// exist.
 func LatestReceipt(logPath string, filter Receipt) (*Receipt, error) {
 	raw, err := os.ReadFile(logPath)
 	if os.IsNotExist(err) {
@@ -228,6 +234,9 @@ func LatestReceipt(logPath string, filter Receipt) (*Receipt, error) {
 			continue
 		}
 		if filter.CorpusSHA != "" && r.CorpusSHA != filter.CorpusSHA {
+			continue
+		}
+		if filter.RepoSHA != "" && r.RepoSHA != filter.RepoSHA {
 			continue
 		}
 		return &r, nil

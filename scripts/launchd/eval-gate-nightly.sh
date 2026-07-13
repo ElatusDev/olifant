@@ -58,36 +58,76 @@ err=$(git -C "$KBWT" checkout --detach origin/main --quiet 2>&1) || skip "kb wor
 cd "$WT" || skip "worktree cd failed"
 err=$(/opt/homebrew/bin/go build -o bin/olifant . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
 
-# Corpus freshness (olifant#77, D-CS4/D-CS5): sync the index incrementally
-# against the pinned tree, land the manifest via auto-PR + self-merge, THEN
-# gate — receipts fingerprint the pinned tree's freshly-written manifest, so
-# they stay consistent with the indexed state even if the PR step fails
-# (self-reported below; the next night's re-diff heals the lag).
+# Family freshness composition (olifant#82 D-FF7, extending olifant#77
+# D-CS4/D-CS5): reconcile EVERY family the gate's retrieval substrate
+# queries BEFORE receipts mint — repo sync (code_*), history index
+# (history_*/code_history_*, cursor advanced by the index itself),
+# failure-modes on-change, corpus sync — then land all changed state files
+# in ONE auto-PR, then gate. Each step self-reports; a failed step never
+# silently skips the gate.
 note() {
     mkdir -p "$(dirname "$DRIFT")"
     printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DRIFT"
 }
+
+# 1) code_* — manifest-diff incremental (olifant#82 D-FF2).
+rsout=$(./bin/olifant repo sync -kb-root "$KBWT" 2>&1) || note "REPO SYNC FAILED: $(echo "$rsout" | tail -1)"
+echo "$rsout" | grep -q "^repo sync synced" && note "REPO SYNC: $(echo "$rsout" | tail -1)"
+
+# 2) history_* / code_history_* — incremental from the cursor; the index
+#    advances the cursor itself (scan-then-index would starve the index).
+hiout=$(./bin/olifant history index -update-manifest -kb-root "$KBWT" -platform-root "$(dirname "$REPO")" 2>&1) \
+    || note "HISTORY INDEX FAILED: $(echo "$hiout" | tail -1)"
+echo "$hiout" | grep -q "manifest advanced" && note "HISTORY: $(echo "$hiout" | grep 'commit chunks upserted' | tail -1 | tr -s ' ')"
+
+# 3) failure_modes_* — re-index only when the curated source changed
+#    (olifant#82 D-FF5). Drop-recreate is fine at this family's size; the
+#    marker advances only after a successful index, so a failed night
+#    retries the next.
+FMSRC=$(ls "$KBWT"/eval/failure-modes/v*.yaml 2>/dev/null | sort | tail -1)
+FMMARK="$HOME/.olifant/eval-gate/fm-last-sha"
+if [ -n "$FMSRC" ]; then
+    fmsha=$(shasum -a 256 "$FMSRC" | cut -d' ' -f1)
+    if [ "$fmsha" != "$(cat "$FMMARK" 2>/dev/null)" ]; then
+        for sc in universal backend webapp mobile e2e infra platform_process; do
+            curl -s -o /dev/null -X DELETE "http://localhost:8000/api/v2/tenants/default_tenant/databases/default_database/collections/failure_modes_$sc" || true
+        done
+        if fmout=$(./bin/olifant dataset index -kb-root "$KBWT" 2>&1); then
+            printf '%s' "$fmsha" > "$FMMARK"
+            note "FAILURE-MODES REINDEXED: $(basename "$FMSRC")"
+        else
+            note "FAILURE-MODES INDEX FAILED (collections dropped, retry next night): $(echo "$fmout" | tail -1)"
+        fi
+    fi
+fi
+
+# 4) corpus_* — incremental (olifant#77 D-CS5), unchanged.
 syncout=$(./bin/olifant corpus sync -kb-root "$KBWT" 2>&1) || note "SYNC FAILED: $(echo "$syncout" | tail -1)"
-echo "$syncout" | grep -q "corpus sync synced" && {
-    note "SYNC: $(echo "$syncout" | grep 'corpus sync' | tail -1)"
-    BR="ops/corpus-sync-nightly"
+echo "$syncout" | grep -q "corpus sync synced" && note "SYNC: $(echo "$syncout" | grep 'corpus sync' | tail -1)"
+
+# 5) Land every changed state file in ONE auto-PR (corpus manifest,
+#    repo manifest, history cursor) — receipts fingerprint the pinned
+#    tree's freshly-written manifests, so a failed PR only lags main.
+if ! git -C "$KBWT" diff --quiet -- corpus/v1/manifest.yaml corpus/v1/repo-manifest.yaml short-term/history-manifest.yaml 2>/dev/null \
+   || [ -n "$(git -C "$KBWT" ls-files --others --exclude-standard -- corpus/v1/repo-manifest.yaml)" ]; then
+    BR="ops/family-sync-nightly"
     if pr_err=$( (git -C "$KBWT" checkout -B "$BR" \
-        && git -C "$KBWT" add corpus/v1/manifest.yaml \
-        && git -C "$KBWT" commit -m "ops(corpus): nightly incremental sync manifest" \
+        && git -C "$KBWT" add corpus/v1/manifest.yaml corpus/v1/repo-manifest.yaml short-term/history-manifest.yaml \
+        && git -C "$KBWT" commit -m "ops(corpus): nightly family sync manifests" \
         && git -C "$KBWT" push -f origin "$BR" \
         && gh pr create --repo ElatusDev/platform-knowledge-base --head "$BR" \
-             --title "ops(corpus): nightly incremental sync manifest" \
-             --body "Automated nightly corpus sync (olifant#77 D-CS5)." 2>&1 \
+             --title "ops(corpus): nightly family sync manifests" \
+             --body "Automated nightly family sync (olifant#77 D-CS5 + olifant#82 D-FF7)." 2>&1 \
         ; for i in 1 2 3 4 5 6; do
             m=$(gh pr view "$BR" --repo ElatusDev/platform-knowledge-base --json mergeable -q .mergeable 2>/dev/null)
             [ "$m" = "MERGEABLE" ] && break; sleep 10
           done \
         && gh pr merge "$BR" --repo ElatusDev/platform-knowledge-base --squash --delete-branch) 2>&1 ); then
-        note "MANIFEST LANDED (auto-PR merged)"
+        note "MANIFESTS LANDED (auto-PR merged)"
     else
         note "MANIFEST PR FAILED (index ahead of main until next sync): $(echo "$pr_err" | tail -1)"
     fi
     git -C "$KBWT" checkout --detach HEAD --quiet 2>/dev/null || true
-}
+fi
 
 exec ./bin/olifant eval gate --notify -kb-root "$KBWT"
