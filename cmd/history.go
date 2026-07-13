@@ -12,6 +12,7 @@ import (
 
 	"github.com/ElatusDev/olifant/history"
 	"github.com/ElatusDev/olifant/internal/chroma"
+	"github.com/ElatusDev/olifant/internal/config"
 )
 
 // History dispatches `olifant history <scan|...>`. Phase 1 ships
@@ -207,15 +208,21 @@ func historyIndex(args []string) int {
 	manifestPath := fs.String("manifest", "", "manifest path (default: <kb-root>/short-term/history-manifest.yaml)")
 	fullScan := fs.Bool("full-scan", false, "ignore manifest; re-walk every commit since --since")
 
-	ollamaURL := fs.String("ollama-url", "http://localhost:11434", "Ollama base URL")
-	chromaURL := fs.String("chroma-url", "http://localhost:8000", "ChromaDB base URL (typically port-forwarded)")
-	chromaTenant := fs.String("chroma-tenant", "default_tenant", "ChromaDB tenant")
-	chromaDB := fs.String("chroma-database", "default_database", "ChromaDB database")
-	embedder := fs.String("embedder", "nomic-embed-text", "Ollama embedding model")
+	// Defaults come from config.Resolve() (the repo convention) — the prior
+	// hardcoded localhost/nomic defaults predated it and made every
+	// scheduled run an embedder-mismatch footgun (olifant#82; the live
+	// collections are bge-m3/1024d since 2026-06-17).
+	rt := config.Resolve()
+	ollamaURL := fs.String("ollama-url", rt.OllamaURL, "Ollama base URL")
+	chromaURL := fs.String("chroma-url", rt.ChromaURL, "ChromaDB base URL (typically port-forwarded)")
+	chromaTenant := fs.String("chroma-tenant", rt.ChromaTenant, "ChromaDB tenant")
+	chromaDB := fs.String("chroma-database", rt.ChromaDatabase, "ChromaDB database")
+	embedder := fs.String("embedder", rt.Embedder, "Ollama embedding model")
 	batchSize := fs.Int("batch", 32, "chunks per embed batch")
 
 	verbose := fs.Bool("v", false, "verbose progress")
 	dryRun := fs.Bool("dry-run", false, "build chunks only; no embed, no upsert")
+	updateManifest := fs.Bool("update-manifest", false, "advance the cursor manifest after a successful index (olifant#82 D-FF4) — the cursor then records exactly what was indexed; scan-then-index would starve index behind scan's cursor")
 	timeoutSec := fs.Int("timeout", 3600, "overall timeout in seconds")
 	_ = fs.Parse(args)
 
@@ -301,6 +308,13 @@ func historyIndex(args []string) int {
 	}
 
 	var records []*history.CommitRecord
+	type repoNewest struct {
+		spec    history.RepoSpec
+		newest  *history.CommitRecord
+		commits int
+		snaps   int
+	}
+	var advances []repoNewest
 	for _, rs := range selected {
 		stopAt := ""
 		if !*fullScan {
@@ -312,6 +326,15 @@ func historyIndex(args []string) int {
 			return 1
 		}
 		records = append(records, recs...)
+		if len(recs) > 0 {
+			snaps := 0
+			for _, r := range recs {
+				snaps += len(r.Snapshots)
+			}
+			// records are newest-first (LogOrderCommitterTime) — recs[0]
+			// is the cursor candidate.
+			advances = append(advances, repoNewest{spec: rs, newest: recs[0], commits: len(recs), snaps: snaps})
+		}
 		if *verbose {
 			fmt.Printf("  %-22s walked=%-5d records=%-5d scope=%s\n",
 				rs.Name, walked, len(recs), rs.Scope)
@@ -338,6 +361,24 @@ func historyIndex(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "history index:", err)
 		return 1
+	}
+
+	// Cursor advance AFTER the successful embed+upsert (write-last, the
+	// D228 discipline): an interrupted index leaves the old cursor, so the
+	// next run re-walks the same commits (idempotent chunk IDs).
+	if *updateManifest && !*dryRun && manPath != "" {
+		for _, a := range advances {
+			manifest.UpdateRepo(a.spec.Name, a.spec.Scope, a.newest.SHA, a.newest.CommittedAt,
+				history.RunDelta{CommitsAdded: a.commits, SnapshotsAdded: a.snaps})
+		}
+		if manifest.LastRunAt == "" || len(advances) > 0 {
+			manifest.LastRunAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		if err := history.SaveManifest(manPath, manifest); err != nil {
+			fmt.Fprintln(os.Stderr, "history index: save manifest:", err)
+			return 1
+		}
+		fmt.Printf("  manifest advanced: %s (%d repos)\n", manPath, len(advances))
 	}
 
 	fmt.Println()

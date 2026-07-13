@@ -260,3 +260,40 @@ func TestGateFirstTryFloor(t *testing.T) {
 		t.Fatalf("disabled floor should pass: %v", v.Reasons)
 	}
 }
+
+// TestLatestReceipt_RepoSHAShapeCompat (olifant#82 GD-1b): a pre-#82 receipt
+// (no repo_manifest_sha256) must NOT match a RepoSHA-constrained filter
+// (STALE-by-shape), must still match an unconstrained one (manifest absent =
+// best-effort, like CorpusSHA), and legacy JSON lines must parse fine.
+func TestLatestReceipt_RepoSHAShapeCompat(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "receipts.jsonl")
+	legacyLine := `{"verdict":"PASS","suite_id":"code-feeding-v2","git_sha":"aaa","suite_sha256":"s1","corpus_manifest_sha256":"c1","timestamp":"2026-07-01T00:00:00Z"}`
+	if err := os.WriteFile(logPath, []byte(legacyLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unconstrained (no repo manifest yet): legacy receipt still FRESH.
+	rec, err := LatestReceipt(logPath, Receipt{Verdict: "PASS", GitSHA: "aaa", SuiteSHA: "s1", CorpusSHA: "c1"})
+	if err != nil || rec == nil {
+		t.Fatalf("legacy receipt should match unconstrained filter: %v, %v", rec, err)
+	}
+
+	// Constrained (repo manifest exists): legacy receipt is STALE-by-shape.
+	rec, err = LatestReceipt(logPath, Receipt{Verdict: "PASS", GitSHA: "aaa", SuiteSHA: "s1", CorpusSHA: "c1", RepoSHA: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec != nil {
+		t.Errorf("legacy receipt matched a RepoSHA-constrained filter: %+v", rec)
+	}
+
+	// A post-#82 receipt with the field matches when constrained.
+	modern := Receipt{Verdict: "PASS", GitSHA: "aaa", SuiteSHA: "s1", CorpusSHA: "c1", RepoSHA: "r1", Timestamp: "2026-07-13T00:00:00Z"}
+	if err := WriteReceipt("", logPath, modern); err != nil {
+		t.Fatal(err)
+	}
+	rec, err = LatestReceipt(logPath, Receipt{Verdict: "PASS", RepoSHA: "r1"})
+	if err != nil || rec == nil || rec.RepoSHA != "r1" {
+		t.Fatalf("modern receipt not found by RepoSHA filter: %+v, %v", rec, err)
+	}
+}

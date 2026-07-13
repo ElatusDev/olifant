@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/dataset"
+	"github.com/ElatusDev/olifant/internal/config"
 	"github.com/ElatusDev/olifant/internal/embedder"
 )
 
@@ -145,11 +146,15 @@ func datasetStats(args []string) int {
 func datasetIndex(args []string) int {
 	fs := flag.NewFlagSet("dataset index", flag.ExitOnError)
 	kbRoot := fs.String("kb-root", "", "knowledge-base root (default: autodetect)")
-	ollamaURL := fs.String("ollama-url", "http://localhost:11434", "Ollama base URL")
-	chromaURL := fs.String("chroma-url", "http://localhost:8000", "ChromaDB base URL (typically port-forwarded)")
-	chromaTenant := fs.String("chroma-tenant", "default_tenant", "ChromaDB tenant")
-	chromaDB := fs.String("chroma-database", "default_database", "ChromaDB database")
-	embedder := fs.String("embedder", "nomic-embed-text", "Ollama embedding model")
+	// Defaults from config.Resolve() (olifant#82): the live failure_modes_*
+	// collections are bge-m3/1024d — the prior localhost/nomic defaults
+	// were a scheduled-run embedder-mismatch footgun.
+	rt := config.Resolve()
+	ollamaURL := fs.String("ollama-url", rt.OllamaURL, "Ollama base URL")
+	chromaURL := fs.String("chroma-url", rt.ChromaURL, "ChromaDB base URL (typically port-forwarded)")
+	chromaTenant := fs.String("chroma-tenant", rt.ChromaTenant, "ChromaDB tenant")
+	chromaDB := fs.String("chroma-database", rt.ChromaDatabase, "ChromaDB database")
+	embedder := fs.String("embedder", rt.Embedder, "Ollama embedding model")
 	batchSize := fs.Int("batch", 32, "chunks per embed batch")
 	dryRun := fs.Bool("dry-run", false, "load + chunk only; no embed, no upsert")
 	verbose := fs.Bool("v", false, "verbose per-collection progress")

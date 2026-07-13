@@ -107,12 +107,13 @@ func evalGate(args []string) int {
 	}
 
 	corpusSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
+	repoSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "repo-manifest.yaml"))
 	env := gateEnv{
 		kbRoot:       kbRoot,
 		platformRoot: platformRoot,
 		logPath:      receiptsLogPath(),
 		baselineDir:  *baselineDir,
-		base:         eval.Receipt{GitSHA: headSHA(), CorpusSHA: corpusSHA, Timestamp: time.Now().UTC().Format(time.RFC3339)},
+		base:         eval.Receipt{GitSHA: headSHA(), CorpusSHA: corpusSHA, RepoSHA: repoSHA, Timestamp: time.Now().UTC().Format(time.RFC3339)},
 		verbose:      *verbose,
 		notify:       *notify,
 		timeoutSec:   *timeoutSec,
@@ -385,6 +386,7 @@ func evalGateCheck(args []string) int {
 		specs = []suiteSpec{{Path: *suitePath}}
 	}
 	corpusSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
+	repoSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "repo-manifest.yaml"))
 	gitSHA := headSHA()
 	logPath := receiptsLogPath()
 
@@ -394,7 +396,7 @@ func evalGateCheck(args []string) int {
 		for _, spec := range specs {
 			suiteSHA, _ := eval.FileSHA256(spec.Path)
 			_ = eval.WriteReceipt("", logPath, eval.Receipt{
-				Verdict: "OVERRIDE", SuiteID: spec.ID, GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA,
+				Verdict: "OVERRIDE", SuiteID: spec.ID, GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA, RepoSHA: repoSHA,
 				OverrideReason: reason, Timestamp: time.Now().UTC().Format(time.RFC3339),
 			})
 		}
@@ -420,14 +422,14 @@ func evalGateCheck(args []string) int {
 			return gateExitUsage
 		}
 		rec, err := eval.LatestReceipt(logPath, eval.Receipt{
-			Verdict: "PASS", SuiteID: spec.ID, GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA,
+			Verdict: "PASS", SuiteID: spec.ID, GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA, RepoSHA: repoSHA,
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "olifant eval gate-check: read receipts:", err)
 			return gateExitUsage
 		}
 		if rec == nil {
-			fmt.Printf("eval gate-check STALE suite=%s: no PASS receipt for HEAD %.12s with current suite+corpus fingerprints\n",
+			fmt.Printf("eval gate-check STALE suite=%s: no PASS receipt for HEAD %.12s with current suite+corpus+repo fingerprints\n",
 				suiteLabel(spec), gitSHA)
 			stale = true
 			continue
