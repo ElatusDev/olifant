@@ -29,7 +29,15 @@ make test         # go test ./...
 make fmt          # go fmt ./...
 make vet          # go vet ./...
 make corpus       # build + run `olifant corpus build -v`
+make preflight    # pre-work validation: probe live seams + run integration suite
 ```
+
+Before starting a work session that touches the live path, run `make preflight`
+(olifant#61): it probes the external seams (tailnet Ollama, ChromaDB, `claude`
+CLI) and runs the integration suite against whatever is up — tests skip
+gracefully on a down seam. This replaced the never-scheduled self-hosted nightly
+(the mini isn't reliably awake at cron time); `integration.yml` is now a
+manual-dispatch-only echo of the same suite for CI-recorded runs.
 
 Requires Go 1.26+. The Makefile pins `GO ?= /opt/homebrew/bin/go`;
 override `GO=` if your toolchain lives elsewhere.
