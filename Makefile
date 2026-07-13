@@ -1,7 +1,7 @@
 BIN ?= bin/olifant
 GO  ?= /opt/homebrew/bin/go
 
-.PHONY: all build tidy clean run fmt vet test test-integration corpus hooks nightly-install nightly-remove
+.PHONY: all build tidy clean run fmt vet test test-integration preflight corpus hooks nightly-install nightly-remove
 
 all: build
 
@@ -30,6 +30,13 @@ test:
 # queue behind each other and blow their per-test deadlines.
 test-integration:
 	$(GO) test -tags=integration -count=1 -v -p 1 ./...
+
+# Pre-work validation (olifant#61 0b): probe the live seams, then run the
+# integration suite against whatever is up. Replaces the never-scheduled
+# self-hosted nightly — the mini isn't reliably awake at cron time, and a
+# local on-demand check needs no runner and runs when it is actually useful.
+preflight:
+	sh scripts/preflight.sh
 
 clean:
 	rm -rf bin/ ../knowledge-base/corpus/v1/*.ndjson ../knowledge-base/corpus/v1/manifest.yaml

@@ -9,12 +9,17 @@ name: Integration (live stack)
 #
 # Each test t.Skip()s when its dependency is down, so a partial stack yields
 # "skipped", not failure.
+#
+# NO SCHEDULE (olifant#61): the Olifant mini isn't reliably awake at a fixed
+# cron time, so a nightly self-hosted run only queued and auto-cancelled at
+# the 24h limit every night. The primary pre-work validation is now LOCAL and
+# on-demand — `make preflight` from any machine on the stack (no runner
+# needed). This workflow stays as an optional manual dispatch: if a
+# self-hosted runner is ever registered, trigger it deliberately from the
+# Actions tab. Manual-only means nothing queues while the mini sleeps.
 
 on:
   workflow_dispatch: {}
-  schedule:
-    # Nightly at 09:10 UTC (after the eval-gate nightly backstop).
-    - cron: '10 9 * * *'
 
 permissions:
   contents: read
