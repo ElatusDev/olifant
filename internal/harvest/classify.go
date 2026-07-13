@@ -1,6 +1,7 @@
 package harvest
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -27,15 +28,19 @@ type Proposal struct {
 	Sub      string   `yaml:"subcommand"`
 	Scope    []string `yaml:"scope,omitempty"`
 	Request  string   `yaml:"request,omitempty"`
+	Claim    string   `yaml:"claim,omitempty"` // validate surface (olifant#86): full claim
+	Diff     string   `yaml:"diff,omitempty"`  // validate surface: frozen diff snapshot (D-VC3)
 	Verdict  string   `yaml:"verdict,omitempty"`
 	Label    string   `yaml:"label,omitempty"`
 	Evidence string   `yaml:"evidence,omitempty"`
-	Cites    []string `yaml:"cites,omitempty"`
+	Cites    []string `yaml:"cites,omitempty"` // for validate: seeds the expected must_cite_any_of skeleton (D-VC5)
 }
 
 // runnableSubcommands are those whose ledger `request` is the full input —
-// a case skeleton can re-run them. validate requests are truncated (IA4/IA5)
-// and become pointers.
+// a case skeleton can re-run them. `validate` is runnable via a different
+// route (olifant#86): its display `request` is truncated, but the enriched
+// ValidateBlock carries the full claim + frozen diff, so a validate turn is
+// reconstructed from the block, not the request (see validateRunnable).
 var runnableSubcommands = map[string]bool{
 	"challenge": true, "prompt context": true, "prompt build": true,
 }
@@ -76,6 +81,15 @@ func Classify(signals []Signal, harvested map[string]bool) []Proposal {
 
 		switch label {
 		case "confirmed":
+			// A validate turn reconstructs from the enriched block (full claim +
+			// frozen diff), not the truncated request (olifant#86). A pre-#86
+			// thin block (empty Claim) has nothing to reconstruct → pointer.
+			if vb := validateRunnable(s.Turn); vb != nil {
+				add(Proposal{Kind: KindEvalCase, TurnID: r.TurnID, Sub: r.Subcommand,
+					Scope: scope, Claim: vb.Claim, Diff: vb.Diff, Verdict: vbVerdict(verdict, vb),
+					Cites: vb.Cites, Label: label, Evidence: r.Note})
+				break
+			}
 			kind := KindEvalPointer
 			if runnableSubcommands[r.Subcommand] && s.Turn != nil && !truncatedRE.MatchString(request) {
 				kind = KindEvalCase
@@ -109,6 +123,51 @@ func Classify(signals []Signal, harvested map[string]bool) []Proposal {
 		}
 	}
 	return out
+}
+
+// CaseYAML renders an accepted eval-case proposal as a suite entry. A validate
+// proposal (olifant#86) emits claim + frozen diff + an `expected:` skeleton
+// (verdict + must_cite_any_of from the run's actuals — a DRAFT the human
+// confirms/trims, D-VC5); a challenge proposal emits the request form.
+func CaseYAML(p Proposal) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  - id: %s\n    scope: [%s]\n", p.TurnID, strings.Join(p.Scope, ", "))
+	if p.Claim == "" {
+		fmt.Fprintf(&b, "    request: %q\n", p.Request)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "    claim: %q\n", p.Claim)
+	b.WriteString("    diff: |\n")
+	for _, line := range strings.Split(strings.TrimRight(p.Diff, "\n"), "\n") {
+		fmt.Fprintf(&b, "      %s\n", line)
+	}
+	b.WriteString("    expected:   # DRAFT skeleton — confirm/trim before relying on it (D-VC5)\n")
+	if p.Verdict != "" {
+		fmt.Fprintf(&b, "      verdict: %s\n", p.Verdict)
+	}
+	if len(p.Cites) > 0 {
+		fmt.Fprintf(&b, "      must_cite_any_of: [%s]\n", strings.Join(p.Cites, ", "))
+	}
+	return b.String()
+}
+
+// validateRunnable returns the enriched ValidateBlock when a turn is a
+// reconstructable validate case — i.e. the block carries the full claim +
+// frozen diff (olifant#86). A pre-#86 thin block (no Claim/Diff) returns nil,
+// so it degrades to a pointer, never a broken case.
+func validateRunnable(t *shortterm.TurnRecord) *shortterm.ValidateBlock {
+	if t != nil && t.Validate != nil && t.Validate.Claim != "" && t.Validate.Diff != "" {
+		return t.Validate
+	}
+	return nil
+}
+
+// vbVerdict prefers the reaction/turn verdict, falling back to the block's.
+func vbVerdict(v string, vb *shortterm.ValidateBlock) string {
+	if v != "" {
+		return v
+	}
+	return vb.Verdict
 }
 
 // turnVerdict extracts the block verdict when the reaction line lacks one.

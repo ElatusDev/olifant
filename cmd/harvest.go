@@ -145,8 +145,7 @@ func harvestAccept(args []string) int {
 	signals := harvest.Join(effective, kbRoot)
 	for _, p := range harvest.Classify(signals, nil) {
 		if p.TurnID == *turnID && p.Kind == harvest.KindEvalCase {
-			entry := fmt.Sprintf("  - id: %s\n    scope: [%s]\n    request: %q\n",
-				p.TurnID, strings.Join(p.Scope, ", "), p.Request)
+			entry := harvest.CaseYAML(p)
 			f, err := os.OpenFile(*suite, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "olifant harvest accept:", err)

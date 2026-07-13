@@ -95,6 +95,7 @@ type DigestBlock struct {
 // assessment here never leaks into retrieval.
 type ValidateBlock struct {
 	Claim                  string                `yaml:"claim,omitempty"`    // full claim text — the runnable-case seed (Request stays display-truncated)
+	Diff                   string                `yaml:"diff,omitempty"`     // full diff text — the frozen snapshot a harvested case reproduces from (D-VC3)
 	ClaudeClaimCount       int                   `yaml:"claude_claim_count"` // atomic claims parsed
 	EvidencedClaims        int                   `yaml:"evidenced_claims"`
 	PartialClaims          int                   `yaml:"partial_claims,omitempty"`

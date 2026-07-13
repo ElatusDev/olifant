@@ -183,7 +183,8 @@ func Validate(args []string) int {
 				Scope:      scopeList,
 				Request:    "claim: " + truncate(claim, 240) + " | diff: " + truncate(diffBody, 240),
 				Validate: &shortterm.ValidateBlock{
-					Claim:                  claim, // full text — the runnable-case seed (olifant#86)
+					Claim:                  claim,    // full text — the runnable-case seed (olifant#86)
+					Diff:                   diffBody, // frozen diff snapshot for a reproducible harvested case (D-VC3)
 					ClaudeClaimCount:       cs.Parsed,
 					EvidencedClaims:        cs.Evidenced,
 					PartialClaims:          cs.Partial,
