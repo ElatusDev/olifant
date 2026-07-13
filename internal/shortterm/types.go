@@ -87,15 +87,28 @@ type DigestBlock struct {
 	Model     string  `yaml:"model,omitempty"`
 }
 
-// ValidateBlock — placeholder for the upcoming validate subcommand.
+// ValidateBlock captures a `validate` run richly enough to reconstruct a
+// runnable eval case (olifant#86, HV-F2) — mirroring ChallengeBlock's
+// reconstructable detail. Pre-#86 records carry only Verdict; the added
+// fields read as zero on old rows (additive, back-compat). Lives under
+// short-term/ (firewalled from the corpus, D-BK9) so storing the model's
+// assessment here never leaks into retrieval.
 type ValidateBlock struct {
-	ClaudeClaimCount   int      `yaml:"claude_claim_count"`
-	EvidencedClaims    int      `yaml:"evidenced_claims"`
-	UnmatchedClaims    []string `yaml:"unmatched_claims,omitempty"`
-	StandardsSatisfied []string `yaml:"standards_satisfied,omitempty"`
-	StandardsViolated  []string `yaml:"standards_violated,omitempty"`
-	DiffSHA            string   `yaml:"diff_sha,omitempty"`
-	Verdict            string   `yaml:"verdict"`
+	Claim                  string                `yaml:"claim,omitempty"`    // full claim text — the runnable-case seed (Request stays display-truncated)
+	ClaudeClaimCount       int                   `yaml:"claude_claim_count"` // atomic claims parsed
+	EvidencedClaims        int                   `yaml:"evidenced_claims"`
+	PartialClaims          int                   `yaml:"partial_claims,omitempty"`
+	UnmatchedClaims        []string              `yaml:"unmatched_claims,omitempty"`
+	StandardsSatisfied     []string              `yaml:"standards_satisfied,omitempty"`
+	StandardsViolated      []string              `yaml:"standards_violated,omitempty"`
+	Cites                  []string              `yaml:"cites,omitempty"` // union of assessment cites — seeds the expected `must_cite_any_of` skeleton
+	RetrievedSources       []string              `yaml:"retrieved_sources,omitempty"`
+	Proceed                string                `yaml:"proceed,omitempty"`
+	ValidateAttempts       int                   `yaml:"validate_attempts,omitempty"`        // 1 = clean first try; 2+ = retried
+	FirstAttemptViolations []challenge.Violation `yaml:"first_attempt_violations,omitempty"` // EG-F3: retry-masked regressions
+	DiffSHA                string                `yaml:"diff_sha,omitempty"`
+	Verdict                string                `yaml:"verdict"`
+	Output                 string                `yaml:"output,omitempty"` // full assessment RawJSON (forensics; challenge parity)
 }
 
 // PerformanceBlock — common timing/metrics across all subcommands.

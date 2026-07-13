@@ -294,6 +294,60 @@ func (r *Result) ExtractVerdict() (verdict, proceed string) {
 	return shape.Validate.OverallVerdict, shape.Validate.Proceed
 }
 
+// ClaimStats parses the assessment RawJSON into the per-claim tallies + cite
+// union the turn record captures (olifant#86). Deterministic, no model call.
+// Returns a zero value on unparseable JSON — the block still records the
+// scalar verdict.
+type ClaimStats struct {
+	Parsed             int
+	Evidenced          int
+	Partial            int
+	Unmatched          int
+	Cites              []string // deduped, in first-seen order — seeds the expected skeleton
+	StandardsSatisfied []string
+	StandardsViolated  []string
+}
+
+func (r *Result) ClaimStats() ClaimStats {
+	var shape struct {
+		Validate struct {
+			ClaimAssessments []struct {
+				Verdict string   `json:"verdict"`
+				Cites   []string `json:"cites"`
+			} `json:"claim_assessments"`
+			StandardsSatisfied []string `json:"standards_satisfied"`
+			StandardsViolated  []string `json:"standards_violated"`
+		} `json:"validate"`
+	}
+	if err := json.Unmarshal([]byte(r.RawJSON), &shape); err != nil {
+		return ClaimStats{}
+	}
+	v := shape.Validate
+	cs := ClaimStats{
+		Parsed:             len(v.ClaimAssessments),
+		StandardsSatisfied: v.StandardsSatisfied,
+		StandardsViolated:  v.StandardsViolated,
+	}
+	seen := map[string]bool{}
+	for _, a := range v.ClaimAssessments {
+		switch a.Verdict {
+		case "evidenced":
+			cs.Evidenced++
+		case "partial":
+			cs.Partial++
+		case "unmatched":
+			cs.Unmatched++
+		}
+		for _, c := range a.Cites {
+			if c != "" && !seen[c] {
+				seen[c] = true
+				cs.Cites = append(cs.Cites, c)
+			}
+		}
+	}
+	return cs
+}
+
 // ResolveDiff reads diff text from one of three sources:
 //   - a literal git revision range (e.g., HEAD~1..HEAD) — runs git diff
 //   - a path to an existing patch file — reads its contents
