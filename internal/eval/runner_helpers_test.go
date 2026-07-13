@@ -193,16 +193,14 @@ func TestEvalExpected(t *testing.T) {
 		MustNotCiteAnyOf: []string{"D999"},
 	}
 	result := &CaseResult{Verdict: "proceed", Blockers: 0}
-	res := &challenge.Result{RawJSON: `{"verdict":"proceed","cites":["D154"]}`}
-	em := evalExpected(exp, result, res)
+	em := evalExpected(exp, result, `{"verdict":"proceed","cites":["D154"]}`)
 	if !em.VerdictPassed || !em.BlockersPassed || !em.MustCitePassed || !em.MustNotCitePassed {
 		t.Errorf("all-pass expectation failed: %+v", em)
 	}
 
 	// Verdict mismatch + blocker over cap + forbidden cite present.
 	result2 := &CaseResult{Verdict: "abort", Blockers: 2}
-	res2 := &challenge.Result{RawJSON: `{"cites":["D999"]}`}
-	em2 := evalExpected(exp, result2, res2)
+	em2 := evalExpected(exp, result2, `{"cites":["D999"]}`)
 	if em2.VerdictPassed {
 		t.Error("verdict should fail on mismatch")
 	}
@@ -220,7 +218,7 @@ func TestEvalExpected(t *testing.T) {
 func TestEvalExpected_EmptyContractDefaultsPass(t *testing.T) {
 	// No verdict, no blocker cap, no cite constraints → everything passes,
 	// cite flags left at zero value.
-	em := evalExpected(&Expected{}, &CaseResult{Blockers: 5}, &challenge.Result{})
+	em := evalExpected(&Expected{}, &CaseResult{Blockers: 5}, "")
 	if !em.VerdictPassed || !em.BlockersPassed {
 		t.Errorf("empty contract should pass verdict/blockers: %+v", em)
 	}
