@@ -112,6 +112,9 @@ func WriteReport(outDir string, signals []Signal, proposals []Proposal, unjoinab
 			if p.Request != "" {
 				fmt.Fprintf(&b, "- request: %s\n", oneLine(p.Request, 200))
 			}
+			if p.Claim != "" {
+				fmt.Fprintf(&b, "- claim: %s\n", oneLine(p.Claim, 200))
+			}
 			if len(p.Cites) > 0 {
 				fmt.Fprintf(&b, "- cites: %s\n", strings.Join(p.Cites, ", "))
 			}
@@ -120,8 +123,7 @@ func WriteReport(outDir string, signals []Signal, proposals []Proposal, unjoinab
 			}
 			if k == KindEvalCase {
 				fmt.Fprintf(&b, "- suite entry (accept = append to the NEW real-usage suite, never code-feeding-v2 — D-HV4):\n")
-				fmt.Fprintf(&b, "  ```yaml\n  - id: %s\n    scope: [%s]\n    request: %s\n  ```\n",
-					p.TurnID, strings.Join(p.Scope, ", "), oneLine(p.Request, 300))
+				fmt.Fprintf(&b, "  ```yaml\n%s  ```\n", CaseYAML(p))
 			}
 			fmt.Fprintf(&b, "\n")
 		}
