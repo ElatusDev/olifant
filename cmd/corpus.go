@@ -6,13 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ElatusDev/olifant/dataset"
+	"github.com/ElatusDev/olifant/history"
 	"github.com/ElatusDev/olifant/internal/config"
 	"github.com/ElatusDev/olifant/internal/corpus"
+	"github.com/ElatusDev/olifant/internal/repos"
 )
 
 // Corpus dispatches `olifant corpus <build|index|index-v2|scan|prose|classify|stats>`.
@@ -528,6 +533,7 @@ func corpusStatus(args []string) int {
 	kbRootFlag := fs.String("kb-root", "", "KB tree to compare (default: OLIFANT_KB_ROOT, then findUp)")
 	memoryRoot := fs.String("memory-root", "", "memory directory (default: $HOME/.claude/projects/.../memory)")
 	withChroma := fs.Bool("chroma", false, "also report live per-scope collection counts")
+	families := fs.Bool("families", false, "family-aware: also report code_* / history_* / failure_modes_* freshness (olifant#82 D-FF6)")
 	_ = fs.Parse(args)
 
 	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
@@ -569,10 +575,85 @@ func corpusStatus(args []string) int {
 			}
 		}
 	}
-	if rep.Added+rep.Changed+rep.Removed > 0 {
+	drift := rep.Added+rep.Changed+rep.Removed > 0
+
+	if *families && familyStatus(kbRoot, platformRoot) {
+		drift = true
+	}
+
+	if drift {
 		return 1 // drift present — scriptable signal (nightly's cheap guard)
 	}
 	return 0
+}
+
+// familyStatus prints the non-corpus family sections of the freshness
+// observable (olifant#82 D-FF6) and reports whether any family drifted.
+// Offline: repo walk + local git only — no chroma, no ollama.
+func familyStatus(kbRoot, platformRoot string) (drift bool) {
+	// --- code_* family: landed repo manifest vs a fresh walk.
+	repCode, err := repos.Status(repos.IngestConfig{
+		Repos:        repos.DefaultRepos(platformRoot),
+		ManifestPath: repos.ManifestPath(kbRoot),
+	})
+	if err != nil {
+		fmt.Printf("code status — NOT MINTED (%v)\n", err)
+		drift = true
+	} else {
+		fmt.Printf("code status — built_at=%s builder=%s sources=%d chunks=%d\n",
+			repCode.BuiltAt, repCode.BuilderVersion, repCode.IndexedSources, repCode.IndexedChunks)
+		fmt.Printf("  drift:    added=%d changed=%d removed=%d (total %d)\n",
+			repCode.Added, repCode.Changed, repCode.Removed, repCode.Added+repCode.Changed+repCode.Removed)
+		if repCode.VersionDrift {
+			fmt.Println("  WARNING:  builder version drift — repo sync will refuse; full re-ingest required")
+		}
+		if repCode.Added+repCode.Changed+repCode.Removed > 0 || repCode.VersionDrift {
+			drift = true
+		}
+	}
+
+	// --- history_* family: cursor manifest age + pending commits per repo.
+	hm, err := history.LoadManifest(filepath.Join(kbRoot, "short-term", "history-manifest.yaml"))
+	switch {
+	case err != nil:
+		fmt.Printf("history status — unreadable cursor manifest (%v)\n", err)
+		drift = true
+	case hm.LastRunAt == "":
+		fmt.Println("history status — never scanned")
+		drift = true
+	default:
+		pending := 0
+		for _, rs := range repos.DefaultRepos(platformRoot) {
+			last := hm.LastSHA(rs.Name)
+			if last == "" {
+				continue
+			}
+			out, gerr := exec.Command("git", "-C", rs.Path, "rev-list", "--count", last+"..HEAD").Output()
+			if gerr != nil {
+				continue // repo missing or SHA unknown locally — visible via the code section
+			}
+			n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+			pending += n
+		}
+		fmt.Printf("history status — last_run_at=%s pending_commits=%d\n", hm.LastRunAt, pending)
+		if pending > 0 {
+			drift = true
+		}
+	}
+
+	// --- failure_modes_* family: curated source presence + entry count.
+	fmPath, fmEntries, err := dataset.LatestSource(kbRoot)
+	switch {
+	case err != nil:
+		fmt.Printf("failure-modes status — source unreadable (%v)\n", err)
+		drift = true
+	case fmPath == "":
+		fmt.Println("failure-modes status — no curated source file")
+	default:
+		rel, _ := filepath.Rel(kbRoot, fmPath)
+		fmt.Printf("failure-modes status — source=%s entries=%d (reconciled by the nightly on change)\n", rel, fmEntries)
+	}
+	return drift
 }
 
 func corpusBuild(args []string) int {

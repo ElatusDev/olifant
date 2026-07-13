@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -38,17 +37,18 @@ func DefaultRepos(platformRoot string) []RepoSpec {
 
 // IngestConfig drives `olifant repo ingest`.
 type IngestConfig struct {
-	Repos       []RepoSpec
-	OutDir      string // <kb-root>/corpus/v1/code (NDJSON output)
-	WriteNDJSON bool   // write per-scope NDJSON in addition to ChromaDB upsert
-	OllamaURL   string
-	ChromaURL   string
-	Embedder    string
-	Tenant      string
-	Database    string
-	BatchSize   int
-	Verbose     bool
-	DryRun      bool // walk + chunk; no embed, no upsert, no write
+	Repos        []RepoSpec
+	OutDir       string // <kb-root>/corpus/v1/code (NDJSON output)
+	WriteNDJSON  bool   // write per-scope NDJSON in addition to ChromaDB upsert
+	ManifestPath string // repo-family manifest, written LAST (olifant#82); "" = skip
+	OllamaURL    string
+	ChromaURL    string
+	Embedder     string
+	Tenant       string
+	Database     string
+	BatchSize    int
+	Verbose      bool
+	DryRun       bool // walk + chunk; no embed, no upsert, no write
 }
 
 // IngestStats summarizes one run.
@@ -83,6 +83,14 @@ func Ingest(ctx context.Context, cfg IngestConfig) (IngestStats, error) {
 		}
 	}
 
+	// A manifest minted over a partially-present repo set would record a
+	// partial source universe; the next sync would delete the rest.
+	if cfg.ManifestPath != "" && !cfg.DryRun {
+		if missing := missingRepoDirs(cfg.Repos); len(missing) > 0 {
+			return stats, fmt.Errorf("ingest: repo dir(s) missing: %s — refusing to mint a partial manifest (restore the checkout, or filter with -repo to skip minting)", strings.Join(missing, ", "))
+		}
+	}
+
 	oc := ollama.New(cfg.OllamaURL)
 	cc := chroma.New(cfg.ChromaURL, cfg.Tenant, cfg.Database)
 
@@ -101,56 +109,25 @@ func Ingest(ctx context.Context, cfg IngestConfig) (IngestStats, error) {
 		}
 	}
 
-	// Group chunks by scope so we can write one NDJSON per scope.
-	scopedChunks := map[string][]corpus.Chunk{}
-
-	for _, rs := range cfg.Repos {
-		if _, err := os.Stat(rs.Path); err != nil {
-			if cfg.Verbose {
-				fmt.Fprintf(os.Stderr, "  skip %s: %v\n", rs.Name, err)
-			}
-			continue
-		}
-		files, err := Walk(rs.Path, rs.Name)
-		if err != nil {
-			return stats, fmt.Errorf("walk %s: %w", rs.Name, err)
-		}
-		stats.FilesRead += len(files)
-
-		var repoChunks []corpus.Chunk
-		for _, f := range files {
-			cs := Chunk(f, rs.Scope)
-			if len(cs) == 0 {
-				stats.FilesSkipped++
-				continue
-			}
-			repoChunks = append(repoChunks, cs...)
-		}
-		stats.ChunksProduced += len(repoChunks)
-		stats.PerRepo[rs.Name] = len(repoChunks)
-		stats.PerScope[rs.Scope] += len(repoChunks)
-		scopedChunks[rs.Scope] = append(scopedChunks[rs.Scope], repoChunks...)
-
-		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "  %-22s files=%-5d chunks=%-6d scope=%s\n",
-				rs.Name, len(files), len(repoChunks), rs.Scope)
-		}
+	// Walk + chunk (shared with Sync/Status — olifant#82).
+	scopedChunks, walkStats, err := CollectChunks(cfg)
+	if err != nil {
+		return stats, fmt.Errorf("walk: %w", err)
 	}
+	stats.FilesRead = walkStats.FilesRead
+	stats.FilesSkipped = walkStats.FilesSkipped
+	stats.ChunksProduced = walkStats.ChunksProduced
+	stats.PerRepo = walkStats.PerRepo
+	stats.PerScope = walkStats.PerScope
 
 	if cfg.DryRun {
 		stats.Elapsed = time.Since(start)
 		return stats, nil
 	}
 
-	// Per scope: sort, write NDJSON, then embed + upsert in batches.
+	// Per scope (already sorted by CollectChunks): write NDJSON, then
+	// embed + upsert in batches.
 	for scope, chunks := range scopedChunks {
-		sort.Slice(chunks, func(i, j int) bool {
-			if chunks[i].Source != chunks[j].Source {
-				return chunks[i].Source < chunks[j].Source
-			}
-			return chunks[i].SourceAnchor < chunks[j].SourceAnchor
-		})
-
 		if cfg.WriteNDJSON && cfg.OutDir != "" {
 			ndjsonPath := filepath.Join(cfg.OutDir, scope+".ndjson")
 			if err := writeChunksNDJSON(ndjsonPath, chunks); err != nil {
@@ -180,6 +157,15 @@ func Ingest(ctx context.Context, cfg IngestConfig) (IngestStats, error) {
 		}
 		stats.ChunksUpserted += ups
 		stats.BatchesSent += batches
+	}
+
+	// Manifest LAST (olifant#82 D-FF1/D-FF2): a full ingest doubles as the
+	// manifest bootstrap; an interrupted run leaves the old manifest (or
+	// none) so the next sync re-diffs and repairs.
+	if cfg.ManifestPath != "" {
+		if err := corpus.WriteManifest(cfg.ManifestPath, BuildManifest(scopedChunks)); err != nil {
+			return stats, fmt.Errorf("write repo manifest: %w", err)
+		}
 	}
 
 	stats.ReposProcessed = len(cfg.Repos)

@@ -386,6 +386,12 @@ func writeManifest(path string, m Manifest) error {
 	return os.WriteFile(path, out, 0o644)
 }
 
+// WriteManifest exposes manifest serialization to the other diffable
+// families (repo sync, olifant#82) so one on-disk shape serves them all.
+func WriteManifest(path string, m Manifest) error {
+	return writeManifest(path, m)
+}
+
 func appendUnique(s []string, v string) []string {
 	if v == "" {
 		return s
