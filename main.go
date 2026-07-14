@@ -43,6 +43,8 @@ func main() {
 		os.Exit(cmd.Eval(args))
 	case "validate":
 		os.Exit(cmd.Validate(args))
+	case "promote":
+		os.Exit(cmd.Promote(args))
 	case "harvest":
 		os.Exit(cmd.Harvest(args))
 	case "retrieve":
@@ -83,6 +85,7 @@ SUBCOMMANDS:
   run          --plan <file> — execute a prompt-plan via PSP runner
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
+  promote      status | set | demote — charter §7 verdict-surface promotion state (challenge/validate)
   digest       <path> — cite-gated, SHA-cached local-model summary of one artifact
   history      scan — walk repo commit history and emit JSONL training data
   dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB

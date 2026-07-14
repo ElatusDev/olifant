@@ -44,6 +44,7 @@ func Validate(args []string) int {
 	synth := fs.String("synth", "", "synthesizer model override")
 	noRetrieval := fs.Bool("no-retrieval", false, "skip ChromaDB retrieval and run the legacy single-synth path")
 	noRecord := fs.Bool("no-record", false, "skip short-term turn record")
+	noBlock := fs.Bool("no-block", false, "force advisory: never return the promoted-block exit even if the validate surface is promoted to blocking (charter §7)")
 	_ = fs.Parse(args)
 
 	// Resolve claim text.
@@ -213,7 +214,15 @@ func Validate(args []string) int {
 		}
 	}
 
-	// Exit code reflects verdict.
+	// Charter §7 enforcement (olifant#87): when the validate surface is promoted
+	// to blocking, a hard verdict (proceed=block) returns the distinct
+	// promoted-block exit. Otherwise the historical verdict-based exit codes
+	// stand (advisory-era: failed=2, partial=1, else 0) — backward compatible.
+	// The eval runner calls validate.Run directly, not this path, so the gate is
+	// never self-blocked.
+	if code := enforceVerdict("validate", proceed, *noBlock, *verbose); code != 0 {
+		return code
+	}
 	switch verdict {
 	case "failed":
 		return 2

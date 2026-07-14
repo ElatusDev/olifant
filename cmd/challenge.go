@@ -79,6 +79,7 @@ func Challenge(args []string) int {
 	synth := fs.String("synth", "", "synthesizer model override")
 	codeFile := fs.String("file", "", "code file to review (frames input as review-request)")
 	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
+	noBlock := fs.Bool("no-block", false, "force advisory: never exit non-zero even if the challenge surface is promoted to blocking (charter §7)")
 	retrieval := fs.String("retrieval", "", "RAG-pivot v2 collection name (e.g., olifant-v2-curriculum); empty = legacy v1 retrieval")
 	_ = fs.Parse(args)
 
@@ -253,5 +254,11 @@ func Challenge(args []string) int {
 			}
 		}
 	}
-	return 0
+
+	// Charter §7 enforcement (olifant#87): a hard verdict (proceed=abort) blocks
+	// only when the challenge surface is promoted to blocking; advisory by
+	// default (fail-safe). The eval runner calls challenge.Run directly, not
+	// this command path, so the gate is never self-blocked.
+	_, proceed := res.ExtractVerdict()
+	return enforceVerdict("challenge", proceed, *noBlock, *verbose)
 }
