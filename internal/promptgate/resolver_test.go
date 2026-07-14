@@ -135,12 +135,10 @@ func TestResolve_KBPathCiteGetsStalenessOverlay(t *testing.T) {
 }
 
 func TestManifestSourceSHAs_MissingOrMalformed(t *testing.T) {
-	if got := manifestSourceSHAs(filepath.Join(t.TempDir(), "nope.yaml")); len(got) != 0 {
-		t.Errorf("missing manifest: %d entries, want 0", len(got))
+	if got := manifestSourceSHAs(nil); len(got) != 0 {
+		t.Errorf("empty manifest bytes: %d entries, want 0", len(got))
 	}
-	bad := filepath.Join(t.TempDir(), "manifest.yaml")
-	_ = os.WriteFile(bad, []byte(":\tnot yaml"), 0o644)
-	if got := manifestSourceSHAs(bad); len(got) != 0 {
+	if got := manifestSourceSHAs([]byte(":\tnot yaml")); len(got) != 0 {
 		t.Errorf("malformed manifest: %d entries, want 0", len(got))
 	}
 }

@@ -11,10 +11,7 @@
 package promptgate
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -22,6 +19,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/corpus"
+	"github.com/ElatusDev/olifant/internal/kbtree"
 )
 
 // Verdict classifies one citation.
@@ -69,7 +67,16 @@ type Resolver struct {
 // manifest (if present) for staleness detection. platformRoot feeds the
 // underlying CiteValidator's file-path resolution.
 func NewResolver(platformRoot, kbRoot string) (*Resolver, error) {
-	v, err := challenge.NewCiteValidator(platformRoot, kbRoot)
+	return NewResolverTree(platformRoot, kbtree.FS(kbRoot))
+}
+
+// NewResolverTree is NewResolver with the KB reads served by an explicit tree —
+// a working-tree checkout (kbtree.FS) or a git ref's blobs (kbtree.Git,
+// olifant#90 / EV-F1). platformRoot still feeds the validator's repo-cite
+// resolution. The cite-resolution logic is identical to the working-tree path;
+// only the byte source differs.
+func NewResolverTree(platformRoot string, kb kbtree.Tree) (*Resolver, error) {
+	v, err := challenge.NewCiteValidatorTree(platformRoot, kb)
 	if err != nil {
 		return nil, fmt.Errorf("cite validator: %w", err)
 	}
@@ -81,20 +88,15 @@ func NewResolver(platformRoot, kbRoot string) (*Resolver, error) {
 	}
 
 	for _, pattern := range layer1Sources {
-		matches, gErr := filepath.Glob(filepath.Join(kbRoot, filepath.FromSlash(pattern)))
+		matches, gErr := kb.Glob(pattern)
 		if gErr != nil {
 			continue
 		}
-		for _, path := range matches {
-			body, rErr := os.ReadFile(path)
+		for _, rel := range matches {
+			body, rErr := kb.ReadFile(rel)
 			if rErr != nil {
 				continue
 			}
-			rel, relErr := filepath.Rel(kbRoot, path)
-			if relErr != nil {
-				continue
-			}
-			rel = filepath.ToSlash(rel)
 			for _, id := range corpus.ExtractCites(string(body)) {
 				if _, seen := r.artifactIDs[id]; !seen {
 					r.artifactIDs[id] = rel
@@ -103,8 +105,10 @@ func NewResolver(platformRoot, kbRoot string) (*Resolver, error) {
 		}
 	}
 
-	r.indexedSHAs = manifestSourceSHAs(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
-	r.liveSHAs = gitBlobSHAs(kbRoot)
+	if raw, rErr := kb.ReadFile("corpus/v1/manifest.yaml"); rErr == nil {
+		r.indexedSHAs = manifestSourceSHAs(raw)
+	}
+	r.liveSHAs = kb.BlobSHAs()
 	return r, nil
 }
 
@@ -153,12 +157,8 @@ func (r *Resolver) overlayStale(kbRelSource string) Verdict {
 // manifestSourceSHAs loads path→sha from a corpus v1 manifest. Missing or
 // malformed manifests yield an empty map — staleness detection degrades to
 // "never stale" rather than failing the gate (D-OP7).
-func manifestSourceSHAs(manifestPath string) map[string]string {
+func manifestSourceSHAs(raw []byte) map[string]string {
 	out := map[string]string{}
-	raw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return out
-	}
 	var m corpus.Manifest
 	if err := yaml.Unmarshal(raw, &m); err != nil {
 		return out
@@ -171,33 +171,3 @@ func manifestSourceSHAs(manifestPath string) map[string]string {
 	return out
 }
 
-// gitBlobSHAs returns path→blob-SHA for the git checkout at root, or an empty
-// map when root is not a repo (mirrors the corpus builder's non-fatal stance).
-func gitBlobSHAs(root string) map[string]string {
-	out := map[string]string{}
-	cmd := exec.Command("git", "ls-files", "-s")
-	cmd.Dir = root
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return out
-	}
-	if err := cmd.Start(); err != nil {
-		return out
-	}
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		tab := strings.IndexByte(line, '\t')
-		if tab < 0 {
-			continue
-		}
-		fields := strings.Fields(line[:tab])
-		if len(fields) < 2 {
-			continue
-		}
-		out[filepath.ToSlash(line[tab+1:])] = fields[1]
-	}
-	_ = cmd.Wait()
-	return out
-}

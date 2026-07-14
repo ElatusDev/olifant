@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ElatusDev/olifant/internal/kbtree"
 )
 
 // Severity classifies how much a violation matters.
@@ -66,12 +68,13 @@ type CiteValidator struct {
 	// retry hints. `business` is the apex scope, always included.
 	termsByLayerScope map[Layer]map[string][]string
 	platformRoot      string
-	// kbRoot is the knowledge-base tree this validator was constructed with
-	// (the same tree its layers loaded from). KB path cites resolve against
-	// it — NOT via platformRoot/knowledge-base (the shared symlink) — so the
-	// gate is deterministic w.r.t. the tree it is given, not the branch the
-	// symlink happens to point at (olifant#71 / AP171).
-	kbRoot       string
+	// kb is the knowledge-base tree this validator was constructed with (the
+	// same tree its layers loaded from). KB path cites resolve against it —
+	// NOT via platformRoot/knowledge-base (the shared symlink) — so the gate is
+	// deterministic w.r.t. the tree it is given (olifant#71 / AP171). The tree
+	// is a working-tree checkout (fsTree) or a git ref's blobs (gitTree,
+	// olifant#90) — the validator's cite logic is identical either way.
+	kb           kbtree.Tree
 	repoPrefixes []string
 }
 
@@ -86,11 +89,18 @@ const ApexScope = "business"
 // root (no scope dir) are treated as scope "universal" for backward
 // compatibility with the old flat layout.
 func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
+	return NewCiteValidatorTree(platformRoot, kbtree.FS(kbRoot))
+}
+
+// NewCiteValidatorTree is NewCiteValidator with the KB reads served by an
+// explicit tree — a working-tree checkout (kbtree.FS) or a git ref's blobs
+// (kbtree.Git, olifant#90). Repo-path cites still resolve against platformRoot.
+func NewCiteValidatorTree(platformRoot string, kb kbtree.Tree) (*CiteValidator, error) {
 	v := &CiteValidator{
 		knownTerms:        map[string]struct{}{},
 		termsByLayerScope: map[Layer]map[string][]string{},
 		platformRoot:      platformRoot,
-		kbRoot:            kbRoot,
+		kb:                kb,
 		repoPrefixes: []string{
 			"core-api", "akademia-plus-web", "elatusdev-web",
 			"akademia-plus-central", "akademia-plus-go",
@@ -105,46 +115,43 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 
 	type layerSource struct {
 		layer Layer
-		path  string
+		dir   string
 	}
 	sources := []layerSource{
-		{LayerDictionary, filepath.Join(kbRoot, "dictionary")},
-		{LayerConcept, filepath.Join(kbRoot, "concepts")},
-		{LayerConstraint, filepath.Join(kbRoot, "constraints")},
-		{LayerGlossary, filepath.Join(kbRoot, "glossary")},
+		{LayerDictionary, "dictionary"},
+		{LayerConcept, "concepts"},
+		{LayerConstraint, "constraints"},
+		{LayerGlossary, "glossary"},
 	}
 
 	for _, src := range sources {
-		if _, statErr := os.Stat(src.path); statErr != nil {
-			continue
+		files, lErr := kb.List(src.dir)
+		if lErr != nil {
+			return nil, lErr
 		}
-		if err := filepath.Walk(src.path, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
-			}
-			if !strings.HasSuffix(path, ".yaml") {
-				return nil
+		for _, rel := range files {
+			if !strings.HasSuffix(rel, ".yaml") {
+				continue
 			}
 			// Scope is the immediate parent directory under the layer
 			// root (e.g., concepts/backend/concepts.yaml → "backend").
 			// If no scope dir (file directly under layer root), use ApexScope.
 			scope := ApexScope
-			if rel, rErr := filepath.Rel(src.path, path); rErr == nil {
-				if parts := strings.Split(filepath.ToSlash(rel), "/"); len(parts) > 1 {
-					scope = parts[0]
-				}
+			sub := strings.TrimPrefix(filepath.ToSlash(rel), src.dir+"/")
+			if parts := strings.Split(sub, "/"); len(parts) > 1 {
+				scope = parts[0]
 			}
 
-			raw, rerr := os.ReadFile(path)
+			raw, rerr := kb.ReadFile(rel)
 			if rerr != nil {
-				return nil
+				continue
 			}
 			var entries []struct {
 				Term     string   `yaml:"term"`
 				Synonyms []string `yaml:"synonyms"`
 			}
 			if uerr := yaml.Unmarshal(raw, &entries); uerr != nil {
-				return nil
+				continue
 			}
 			if _, ok := v.termsByLayerScope[src.layer]; !ok {
 				v.termsByLayerScope[src.layer] = map[string][]string{}
@@ -160,9 +167,6 @@ func NewCiteValidator(platformRoot, kbRoot string) (*CiteValidator, error) {
 					v.knownTerms[s] = struct{}{}
 				}
 			}
-			return nil
-		}); err != nil {
-			return nil, err
 		}
 	}
 
@@ -580,15 +584,16 @@ func (v *CiteValidator) fileExists(relPath string) bool {
 	// so both bare (decisions/log.md) and prefixed (knowledge-base/...) shapes
 	// hit the same tree. Repo cites (core-api/...) resolve against platformRoot.
 	// The symlink stays a last-resort fallback for the empty-kbRoot case.
-	var candidates []string
-	if v.kbRoot != "" {
-		candidates = append(candidates, filepath.Join(v.kbRoot, strings.TrimPrefix(relPath, "knowledge-base/")))
+	// KB path cites resolve against the pinned KB tree (fsTree or a git ref).
+	if v.kb != nil && v.kb.Exists(strings.TrimPrefix(relPath, "knowledge-base/")) {
+		return true
 	}
-	candidates = append(candidates,
+	// Repo cites (core-api/...) resolve against the real platformRoot; the
+	// symlink stays a last-resort fallback for the empty-KB case.
+	for _, abs := range []string{
 		filepath.Join(v.platformRoot, relPath),
 		filepath.Join(v.platformRoot, "knowledge-base", relPath),
-	)
-	for _, abs := range candidates {
+	} {
 		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
 			return true
 		}
