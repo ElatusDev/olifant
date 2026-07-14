@@ -236,3 +236,33 @@ func TestRun_WithValidator_RetrievesAndRetries(t *testing.T) {
 		t.Error("expected first-attempt violations snapshot")
 	}
 }
+
+func TestClaimStats_ParsesAssessments(t *testing.T) {
+	r := &Result{RawJSON: `{"validate":{
+		"claims_parsed":[{"id":"c1"},{"id":"c2"},{"id":"c3"}],
+		"claim_assessments":[
+			{"claim_id":"c1","verdict":"evidenced","cites":["D17","core-api/Foo.java#L1-L9"]},
+			{"claim_id":"c2","verdict":"partial","cites":["D17","AP3"]},
+			{"claim_id":"c3","verdict":"unmatched","cites":[]}
+		],
+		"standards_satisfied":["D123"],"standards_violated":["AP9"],
+		"overall_verdict":"partial","proceed":"hold"}}`}
+	cs := r.ClaimStats()
+	if cs.Parsed != 3 || cs.Evidenced != 1 || cs.Partial != 1 || cs.Unmatched != 1 {
+		t.Errorf("tallies = %+v, want 3/1/1/1", cs)
+	}
+	// cites deduped, first-seen order: D17, Foo, AP3.
+	want := "D17|core-api/Foo.java#L1-L9|AP3"
+	if got := strings.Join(cs.Cites, "|"); got != want {
+		t.Errorf("cites = %q, want %q", got, want)
+	}
+	if strings.Join(cs.StandardsSatisfied, ",") != "D123" || strings.Join(cs.StandardsViolated, ",") != "AP9" {
+		t.Errorf("standards = %+v", cs)
+	}
+}
+
+func TestClaimStats_UnparseableIsZero(t *testing.T) {
+	if cs := (&Result{RawJSON: "not json"}).ClaimStats(); cs.Parsed != 0 || cs.Cites != nil {
+		t.Errorf("unparseable RawJSON should give zero stats, got %+v", cs)
+	}
+}

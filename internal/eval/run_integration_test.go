@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,5 +134,144 @@ func TestRun_RequestBuildFailureRecorded(t *testing.T) {
 	}
 	if len(report.Cases) != 1 || report.Cases[0].Error == "" {
 		t.Errorf("expected recorded request-build error, got %+v", report.Cases)
+	}
+}
+
+// validate synth output for the content-aware fake below.
+const evalValidateOut = `{"validate":{"claim_summary":"the diff adds a tenant-scoped health endpoint","claims_parsed":[{"id":"c1","text":"endpoint is tenant-scoped"}],"claim_assessments":[{"claim_id":"c1","verdict":"evidenced","evidence":"H.java#L1-L2 adds a @TenantId-annotated private Long tenantId field, engaging tenant scoping on the entity as the claim states","cites":["D154"]}],"standards_satisfied":["D154"],"standards_violated":[],"overall_verdict":"validated","proceed":"merge"}}`
+
+// TestRun_ValidateAndChallengeMixed drives a suite with BOTH a challenge case
+// and a validate case through the same Run (olifant#86 D-VC4). The fake synth
+// is content-aware: a validate synth prompt (mentions claims_parsed) gets the
+// validate JSON, otherwise the challenge JSON — so both surfaces execute and
+// grade in one suite.
+func TestRun_ValidateAndChallengeMixed(t *testing.T) {
+	oll := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/version":
+			_, _ = w.Write([]byte(`{"version":"0.5.0"}`))
+		case "/api/embed":
+			var req ollama.EmbedRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			embs := make([][]float32, len(req.Input))
+			for i := range embs {
+				embs[i] = []float32{0.1, 0.2}
+			}
+			_ = json.NewEncoder(w).Encode(ollama.EmbedResponse{Embeddings: embs})
+		case "/api/generate":
+			body, _ := io.ReadAll(r.Body)
+			out := evalChallengeOut
+			if strings.Contains(string(body), "claims_parsed") {
+				out = evalValidateOut
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"response": out, "done": true, "eval_count": 5, "eval_duration": 1e9})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer oll.Close()
+
+	chr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/heartbeat"):
+			_, _ = w.Write([]byte(`{"nanosecond heartbeat":1}`))
+		case strings.HasSuffix(r.URL.Path, "/collections"):
+			_, _ = w.Write([]byte(`{"id":"c1","name":"corpus"}`))
+		case strings.HasSuffix(r.URL.Path, "/query"):
+			_, _ = w.Write([]byte(`{"ids":[["a"]],"documents":[["doc"]],"metadatas":[[{"source":"patterns/backend.md","scope":"backend"}]],"distances":[[0.1]]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer chr.Close()
+
+	t.Setenv("OLIFANT_SYNTH_BACKEND", "ollama")
+	t.Setenv("OLIFANT_OLLAMA_URL", oll.URL)
+	t.Setenv("OLIFANT_CHROMA_URL", chr.URL)
+	t.Setenv("OLIFANT_EMBEDDER", "bge-m3")
+	t.Setenv("OLIFANT_SYNTHESIZER", "synth-m")
+
+	root := t.TempDir()
+	kb := filepath.Join(root, "knowledge-base")
+	dict := filepath.Join(kb, "dictionary", "backend", "domain.yaml")
+	if err := os.MkdirAll(filepath.Dir(dict), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dict, []byte("- term: SB-04\n- term: D154\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	suite := &Suite{
+		SuiteID: "mixed",
+		Cases: []Case{
+			{ID: "chal-1", Scope: []string{"backend"}, Request: "add a tenant scoped invoice entity",
+				Expected: &Expected{Verdict: "VALID", MustCiteAnyOf: []string{"SB-04"}}},
+			{ID: "val-1", Scope: []string{"backend"},
+				Claim:    "the new endpoint is tenant-scoped",
+				Diff:     "diff --git a/H.java b/H.java\n+@TenantId private Long tenantId;\n",
+				Expected: &Expected{Verdict: "validated", MustCiteAnyOf: []string{"D154"}}},
+		},
+	}
+
+	report, err := Run(context.Background(), RunConfig{Suite: suite, PlatformRoot: root, KBRoot: kb, OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Cases) != 2 {
+		t.Fatalf("want 2 case results, got %d", len(report.Cases))
+	}
+	byID := map[string]CaseResult{}
+	for _, cr := range report.Cases {
+		byID[cr.CaseID] = cr
+	}
+	// Challenge case unchanged.
+	if byID["chal-1"].Verdict != "VALID" {
+		t.Errorf("challenge verdict = %q, want VALID", byID["chal-1"].Verdict)
+	}
+	// Validate case executed + graded through the shared path.
+	val := byID["val-1"]
+	if val.Verdict != "validated" {
+		t.Errorf("validate verdict = %q, want validated (runner executed validate.Run)", val.Verdict)
+	}
+	if val.ExpectedMatch == nil || !val.ExpectedMatch.VerdictPassed || !val.ExpectedMatch.MustCitePassed {
+		t.Errorf("validate case did not grade via evalExpected: %+v", val.ExpectedMatch)
+	}
+	// Both cases are blocker-free → both counted clean (olifant#86 tally fix:
+	// the validate branch must tally CleanCases like the challenge path).
+	if val.Blockers != 0 {
+		t.Fatalf("fixture expected a blocker-free validate case, got %d blockers", val.Blockers)
+	}
+	if report.CleanCases != 2 {
+		t.Errorf("CleanCases = %d, want 2 (validate case with 0 blockers must count clean)", report.CleanCases)
+	}
+}
+
+// TestRun_ValidateCaseError covers the validate error path (olifant#86): when
+// validate.Run fails, the case is recorded with an Error and NOT counted clean.
+func TestRun_ValidateCaseError(t *testing.T) {
+	t.Setenv("OLIFANT_SYNTH_BACKEND", "ollama")
+	t.Setenv("OLIFANT_OLLAMA_URL", "http://127.0.0.1:1") // dead → embed/synth fails
+	t.Setenv("OLIFANT_CHROMA_URL", "http://127.0.0.1:1")
+	t.Setenv("OLIFANT_EMBEDDER", "bge-m3")
+	t.Setenv("OLIFANT_SYNTHESIZER", "synth-m")
+
+	root := t.TempDir()
+	kb := filepath.Join(root, "knowledge-base")
+	if err := os.MkdirAll(kb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	suite := &Suite{SuiteID: "verr", Cases: []Case{
+		{ID: "v-err", Scope: []string{"backend"}, Claim: "x is tenant-scoped", Diff: "diff --git a/x b/x\n+y\n",
+			Expected: &Expected{Verdict: "validated"}},
+	}}
+	report, err := Run(context.Background(), RunConfig{Suite: suite, PlatformRoot: root, KBRoot: kb, OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Cases) != 1 || report.Cases[0].Error == "" {
+		t.Fatalf("expected a recorded validate error, got %+v", report.Cases)
+	}
+	if report.CleanCases != 0 {
+		t.Errorf("errored validate case must not count clean: CleanCases=%d", report.CleanCases)
 	}
 }

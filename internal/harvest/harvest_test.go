@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ElatusDev/olifant/internal/shortterm"
 )
 
 func writeFixtures(t *testing.T) (reactionsPath, kbRoot string) {
@@ -152,5 +154,69 @@ func TestCursor_RoundTrip(t *testing.T) {
 	got, err := LoadCursor(path)
 	if err != nil || !got["a"] || !got["b"] || !got["c"] {
 		t.Errorf("cursor round-trip: %v %v", got, err)
+	}
+}
+
+func TestClassify_ValidateRunnableFromBlock(t *testing.T) {
+	// Enriched validate block (olifant#86) → runnable eval-case, reconstructed
+	// from the full claim + frozen diff, NOT the truncated request.
+	turn := &shortterm.TurnRecord{
+		TurnID: "v1", Subcommand: "validate",
+		Scope:   []string{"backend"},
+		Request: "claim: the endpoint is tenant-scop… | diff: diff --git…", // truncated display
+		Validate: &shortterm.ValidateBlock{
+			Claim:   "the new health endpoint is tenant-scoped",
+			Diff:    "diff --git a/H.java b/H.java\n+@TenantId private Long tenantId;\n",
+			Verdict: "validated",
+			Cites:   []string{"D154"},
+		},
+	}
+	sig := []Signal{{Reaction: Reaction{TurnID: "v1", Subcommand: "validate", Reaction: "accept"}, Turn: turn}}
+	props := Classify(sig, nil)
+	var ec *Proposal
+	for i := range props {
+		if props[i].Kind == KindEvalCase {
+			ec = &props[i]
+		}
+	}
+	if ec == nil {
+		t.Fatalf("validate turn did not classify as eval-case: %+v", props)
+	}
+	if ec.Claim != turn.Validate.Claim || ec.Diff != turn.Validate.Diff {
+		t.Errorf("case not reconstructed from block: claim=%q diff=%q", ec.Claim, ec.Diff)
+	}
+	if ec.Verdict != "validated" || len(ec.Cites) != 1 || ec.Cites[0] != "D154" {
+		t.Errorf("expected-skeleton seed wrong: verdict=%q cites=%v", ec.Verdict, ec.Cites)
+	}
+}
+
+func TestClassify_ThinValidateBlockStaysPointer(t *testing.T) {
+	// A pre-#86 thin block (no Claim/Diff) can't be reconstructed → pointer.
+	turn := &shortterm.TurnRecord{
+		TurnID: "v0", Subcommand: "validate", Scope: []string{"backend"},
+		Request:  "claim: x… | diff: y…",
+		Validate: &shortterm.ValidateBlock{Verdict: "validated"},
+	}
+	sig := []Signal{{Reaction: Reaction{TurnID: "v0", Subcommand: "validate", Reaction: "accept"}, Turn: turn}}
+	props := Classify(sig, nil)
+	if len(props) != 1 || props[0].Kind != KindEvalPointer {
+		t.Errorf("thin validate block should stay pointer: %+v", props)
+	}
+}
+
+func TestCaseYAML_ValidateAndChallenge(t *testing.T) {
+	// Validate proposal → claim + diff block + expected skeleton.
+	v := CaseYAML(Proposal{Kind: KindEvalCase, TurnID: "v1", Scope: []string{"backend"},
+		Claim: "endpoint is tenant-scoped", Diff: "diff --git a/H b/H\n+x\n",
+		Verdict: "validated", Cites: []string{"D154", "SB-04"}})
+	for _, want := range []string{"claim: \"endpoint is tenant-scoped\"", "diff: |\n      diff --git a/H b/H\n      +x", "expected:", "verdict: validated", "must_cite_any_of: [D154, SB-04]"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("validate CaseYAML missing %q\n---\n%s", want, v)
+		}
+	}
+	// Challenge proposal → request form, no expected.
+	c := CaseYAML(Proposal{Kind: KindEvalCase, TurnID: "c1", Scope: []string{"webapp"}, Request: "add an endpoint"})
+	if !strings.Contains(c, "request: \"add an endpoint\"") || strings.Contains(c, "expected:") {
+		t.Errorf("challenge CaseYAML wrong:\n%s", c)
 	}
 }

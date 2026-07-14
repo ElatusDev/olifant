@@ -119,3 +119,47 @@ func TestWrite_MkdirFailsWhenRootIsFile(t *testing.T) {
 		t.Error("Write under a file-path root: want error, got nil")
 	}
 }
+
+func TestValidateBlock_EnrichedRoundTripAndBackCompat(t *testing.T) {
+	// Enriched block round-trips through YAML with all olifant#86 fields.
+	rec := &TurnRecord{
+		TurnID: "t1", TS: "2026-07-13T00:00:00Z", Subcommand: "validate",
+		Request: "claim: short… | diff: short…", // display-truncated
+		Validate: &ValidateBlock{
+			Claim:            "the full untruncated claim text that seeds a runnable case",
+			ClaudeClaimCount: 3, EvidencedClaims: 1, PartialClaims: 1,
+			Cites:            []string{"D17", "AP3"},
+			RetrievedSources: []string{"patterns/backend.md"},
+			Proceed:          "hold", ValidateAttempts: 2,
+			Verdict: "partial", Output: `{"validate":{}}`,
+		},
+	}
+	out, err := yaml.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got TurnRecord
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Validate.Claim != rec.Validate.Claim {
+		t.Error("full Claim did not round-trip (the runnable-case seed)")
+	}
+	if got.Request == got.Validate.Claim {
+		t.Error("Request should stay display-truncated, distinct from the full Claim")
+	}
+	if got.Validate.ClaudeClaimCount != 3 || got.Validate.Proceed != "hold" || got.Validate.ValidateAttempts != 2 {
+		t.Errorf("enriched fields lost: %+v", got.Validate)
+	}
+
+	// Back-compat: a pre-#86 thin record (only verdict) still parses; new
+	// fields read as zero.
+	old := "turn_id: t0\nts: \"2026-06-01T00:00:00Z\"\nsubcommand: validate\nrequest: r\nvalidate:\n  claude_claim_count: 0\n  verdict: validated\nperformance: {}\n"
+	var oldRec TurnRecord
+	if err := yaml.Unmarshal([]byte(old), &oldRec); err != nil {
+		t.Fatalf("pre-#86 thin record failed to parse: %v", err)
+	}
+	if oldRec.Validate.Verdict != "validated" || oldRec.Validate.Claim != "" || oldRec.Validate.Cites != nil {
+		t.Errorf("thin record back-compat wrong: %+v", oldRec.Validate)
+	}
+}

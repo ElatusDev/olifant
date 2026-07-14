@@ -31,12 +31,18 @@ type Case struct {
 	Scope      []string  `yaml:"scope,omitempty"`
 	File       string    `yaml:"file,omitempty"`        // relative to platform root; passed as --file
 	Request    string    `yaml:"request,omitempty"`     // alternative to File: a literal request string
+	Claim      string    `yaml:"claim,omitempty"`       // validate surface (olifant#86): full claim text
+	Diff       string    `yaml:"diff,omitempty"`        // validate surface: frozen diff snapshot (self-contained, D-VC3)
 	TopN       int       `yaml:"top_n,omitempty"`       // overrides Default.TopN
 	MaxTokens  int       `yaml:"max_tokens,omitempty"`  // overrides Default.MaxTokens
 	TimeoutSec int       `yaml:"timeout_sec,omitempty"` // overrides Default.TimeoutSec
 	Synth      string    `yaml:"synth,omitempty"`       // overrides Default.Synth
 	Expected   *Expected `yaml:"expected,omitempty"`    // optional graded eval
 }
+
+// IsValidate reports whether a case exercises the validate surface (claim +
+// frozen diff) rather than challenge (file/request). olifant#86.
+func (c Case) IsValidate() bool { return c.Claim != "" && c.Diff != "" }
 
 // Expected is the optional graded-eval contract for a case.
 type Expected struct {

@@ -11,6 +11,7 @@ import (
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/config"
 	synthlib "github.com/ElatusDev/olifant/internal/synth"
+	"github.com/ElatusDev/olifant/internal/validate"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,6 +97,37 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 		timeoutSec := pickInt(c.TimeoutSec, cfg.Suite.Default.TimeoutSec, 240)
 		synth := pickStr(c.Synth, cfg.Suite.Default.Synth, defaultSynth)
 
+		if cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "  [case %d/%d] %s [scope=%v] — running…\n",
+				i+1, len(cfg.Suite.Cases), c.ID, c.Scope)
+		}
+
+		// Validate surface (olifant#86 D-VC4): a claim+diff case dispatches to
+		// validate.Run and grades through the same evalExpected — checked BEFORE
+		// buildRequestForCase (which requires file/request the validate case
+		// lacks). The challenge path below is untouched.
+		if c.IsValidate() {
+			vres, rawJSON := runValidateCase(ctx, c, caseDir, caseStart, rt, sc, validator, synth, topN, timeoutSec)
+			if c.Expected != nil && vres.Error == "" {
+				em := evalExpected(c.Expected, &vres, rawJSON)
+				vres.ExpectedMatch = em
+				gradedTotal++
+				if em.VerdictPassed && em.BlockersPassed && (em.MustCitePassed || c.Expected.MustCiteAnyOf == nil) && (em.MustNotCitePassed || c.Expected.MustNotCiteAnyOf == nil) {
+					gradedPass++
+				}
+			}
+			// Same clean/blocker tallying as the challenge path below — a
+			// validate case with 0 blockers counts clean too (olifant#86).
+			if vres.Error == "" && vres.Blockers == 0 {
+				report.CleanCases++
+			}
+			report.TotalBlockers += vres.Blockers
+			report.TotalWarnings += vres.Warnings
+			report.TotalInfos += vres.Infos
+			report.Cases = append(report.Cases, vres)
+			continue
+		}
+
 		// Build request: either --file content or literal request
 		request, rerr := buildRequestForCase(c, cfg.PlatformRoot)
 		if rerr != nil {
@@ -105,11 +137,6 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 				Error: rerr.Error(),
 			})
 			continue
-		}
-
-		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "  [case %d/%d] %s [scope=%v] — running…\n",
-				i+1, len(cfg.Suite.Cases), c.ID, c.Scope)
 		}
 
 		caseCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
@@ -182,7 +209,7 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 
 		// Graded eval check
 		if c.Expected != nil {
-			em := evalExpected(c.Expected, &result, res)
+			em := evalExpected(c.Expected, &result, res.RawJSON)
 			result.ExpectedMatch = em
 			gradedTotal++
 			if em.VerdictPassed && em.BlockersPassed && (em.MustCitePassed || c.Expected.MustCiteAnyOf == nil) && (em.MustNotCitePassed || c.Expected.MustNotCiteAnyOf == nil) {
@@ -366,7 +393,77 @@ func writeReport(path string, r *Report) error {
 	return os.WriteFile(path, []byte(header+string(body)), 0o644)
 }
 
-func evalExpected(exp *Expected, result *CaseResult, res *challenge.Result) *ExpectedMatch {
+// runValidateCase executes a validate-surface case (olifant#86 D-VC4):
+// dispatch the frozen claim+diff to validate.Run, then populate a CaseResult
+// in the same shape the challenge path produces so grading is surface-shared.
+// Returns the result + the assessment RawJSON (for evalExpected's cite check).
+func runValidateCase(
+	ctx context.Context, c Case, caseDir string, caseStart time.Time,
+	rt config.Runtime, sc synthlib.Client, validator *challenge.CiteValidator,
+	synthModel string, topN, timeoutSec int,
+) (CaseResult, string) {
+	result := CaseResult{CaseID: c.ID, Scope: c.Scope}
+
+	caseCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	res, runErr := validate.Run(caseCtx, validate.Config{
+		Claim:              c.Claim,
+		Diff:               c.Diff,
+		OllamaURL:          rt.OllamaURL,
+		ChromaURL:          rt.ChromaURL,
+		Embedder:           rt.Embedder,
+		Synthesizer:        synthModel,
+		Synth:              sc,
+		Tenant:             rt.ChromaTenant,
+		Database:           rt.ChromaDatabase,
+		Scopes:             c.Scope,
+		TopN:               topN,
+		Temperature:        0,
+		Validator:          validator,
+		MaxValidateRetries: 1,
+	})
+	result.ElapsedMs = time.Since(caseStart).Milliseconds()
+	if runErr != nil {
+		result.Error = runErr.Error()
+		return result, ""
+	}
+
+	for _, v := range res.RemainingViolations {
+		switch v.Severity {
+		case challenge.SeverityBlocker:
+			result.Blockers++
+		case challenge.SeverityWarning:
+			result.Warnings++
+		case challenge.SeverityInfo:
+			result.Infos++
+		}
+	}
+	verdict, proceed := res.ExtractVerdict()
+	result.Verdict = verdict
+	result.Proceed = proceed
+	result.Attempts = res.ValidateAttempts
+	result.FirstAttemptViolations = toFirstAttemptViolations(res.FirstAttemptViolations)
+	result.RetrievedCount = res.RetrievedCount
+	result.EmbedMs = res.EmbedMs
+	result.RetrieveMs = res.RetrieveMs
+	result.SynthMs = res.SynthMs
+	result.EvalTokens = res.SynthEvalCount
+	result.TokensPerSec = res.SynthTokensSec
+
+	outYAML := filepath.Join(caseDir, "output.yaml")
+	if werr := os.WriteFile(outYAML, []byte(res.YAMLOutput+"\n"), 0o644); werr != nil {
+		fmt.Fprintf(os.Stderr, "    warn: write output.yaml: %v\n", werr)
+	}
+	result.OutputYAMLPath = outYAML
+	return result, res.RawJSON
+}
+
+// evalExpected grades a case against its Expected contract. Surface-agnostic
+// (olifant#86): it reads the verdict + blockers off the already-populated
+// CaseResult and does the cite substring checks against the raw output — so
+// challenge and validate cases grade through the same path, only the producer
+// differs.
+func evalExpected(exp *Expected, result *CaseResult, output string) *ExpectedMatch {
 	em := &ExpectedMatch{}
 	em.VerdictPassed = (exp.Verdict == "" || exp.Verdict == result.Verdict)
 
@@ -376,7 +473,6 @@ func evalExpected(exp *Expected, result *CaseResult, res *challenge.Result) *Exp
 		em.BlockersPassed = true
 	}
 
-	output := res.RawJSON
 	if exp.MustCiteAnyOf != nil {
 		em.MustCitePassed = false
 		for _, cite := range exp.MustCiteAnyOf {

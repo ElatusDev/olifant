@@ -175,6 +175,7 @@ func Validate(args []string) int {
 		if found, ok := findUp("knowledge-base/README.md"); ok {
 			kbRoot := filepath.Dir(found)
 			ts := time.Now()
+			cs := res.ClaimStats()
 			rec := &shortterm.TurnRecord{
 				TurnID:     shortterm.NewTurnID(ts, claim),
 				TS:         ts.UTC().Format(time.RFC3339),
@@ -182,7 +183,20 @@ func Validate(args []string) int {
 				Scope:      scopeList,
 				Request:    "claim: " + truncate(claim, 240) + " | diff: " + truncate(diffBody, 240),
 				Validate: &shortterm.ValidateBlock{
-					Verdict: verdict,
+					Claim:                  claim,    // full text — the runnable-case seed (olifant#86)
+					Diff:                   diffBody, // frozen diff snapshot for a reproducible harvested case (D-VC3)
+					ClaudeClaimCount:       cs.Parsed,
+					EvidencedClaims:        cs.Evidenced,
+					PartialClaims:          cs.Partial,
+					StandardsSatisfied:     cs.StandardsSatisfied,
+					StandardsViolated:      cs.StandardsViolated,
+					Cites:                  cs.Cites,
+					RetrievedSources:       res.RetrievedSources,
+					Proceed:                proceed,
+					ValidateAttempts:       res.ValidateAttempts,
+					FirstAttemptViolations: res.FirstAttemptViolations,
+					Verdict:                verdict,
+					Output:                 res.RawJSON,
 				},
 				Performance: shortterm.PerformanceBlock{
 					ElapsedMs:    res.Elapsed.Milliseconds(),
