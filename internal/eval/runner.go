@@ -116,6 +116,14 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 					gradedPass++
 				}
 			}
+			// Same clean/blocker tallying as the challenge path below — a
+			// validate case with 0 blockers counts clean too (olifant#86).
+			if vres.Error == "" && vres.Blockers == 0 {
+				report.CleanCases++
+			}
+			report.TotalBlockers += vres.Blockers
+			report.TotalWarnings += vres.Warnings
+			report.TotalInfos += vres.Infos
 			report.Cases = append(report.Cases, vres)
 			continue
 		}

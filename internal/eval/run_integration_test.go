@@ -138,7 +138,7 @@ func TestRun_RequestBuildFailureRecorded(t *testing.T) {
 }
 
 // validate synth output for the content-aware fake below.
-const evalValidateOut = `{"validate":{"claim_summary":"the diff adds a tenant-scoped health endpoint","claims_parsed":[{"id":"c1","text":"endpoint is tenant-scoped"}],"claim_assessments":[{"claim_id":"c1","verdict":"evidenced","cites":["D154"]}],"standards_satisfied":["D154"],"standards_violated":[],"overall_verdict":"validated","proceed":"merge"}}`
+const evalValidateOut = `{"validate":{"claim_summary":"the diff adds a tenant-scoped health endpoint","claims_parsed":[{"id":"c1","text":"endpoint is tenant-scoped"}],"claim_assessments":[{"claim_id":"c1","verdict":"evidenced","evidence":"H.java#L1-L2 adds a @TenantId-annotated private Long tenantId field, engaging tenant scoping on the entity as the claim states","cites":["D154"]}],"standards_satisfied":["D154"],"standards_violated":[],"overall_verdict":"validated","proceed":"merge"}}`
 
 // TestRun_ValidateAndChallengeMixed drives a suite with BOTH a challenge case
 // and a validate case through the same Run (olifant#86 D-VC4). The fake synth
@@ -207,8 +207,8 @@ func TestRun_ValidateAndChallengeMixed(t *testing.T) {
 			{ID: "chal-1", Scope: []string{"backend"}, Request: "add a tenant scoped invoice entity",
 				Expected: &Expected{Verdict: "VALID", MustCiteAnyOf: []string{"SB-04"}}},
 			{ID: "val-1", Scope: []string{"backend"},
-				Claim: "the new endpoint is tenant-scoped",
-				Diff:  "diff --git a/H.java b/H.java\n+@TenantId private Long tenantId;\n",
+				Claim:    "the new endpoint is tenant-scoped",
+				Diff:     "diff --git a/H.java b/H.java\n+@TenantId private Long tenantId;\n",
 				Expected: &Expected{Verdict: "validated", MustCiteAnyOf: []string{"D154"}}},
 		},
 	}
@@ -235,5 +235,43 @@ func TestRun_ValidateAndChallengeMixed(t *testing.T) {
 	}
 	if val.ExpectedMatch == nil || !val.ExpectedMatch.VerdictPassed || !val.ExpectedMatch.MustCitePassed {
 		t.Errorf("validate case did not grade via evalExpected: %+v", val.ExpectedMatch)
+	}
+	// Both cases are blocker-free → both counted clean (olifant#86 tally fix:
+	// the validate branch must tally CleanCases like the challenge path).
+	if val.Blockers != 0 {
+		t.Fatalf("fixture expected a blocker-free validate case, got %d blockers", val.Blockers)
+	}
+	if report.CleanCases != 2 {
+		t.Errorf("CleanCases = %d, want 2 (validate case with 0 blockers must count clean)", report.CleanCases)
+	}
+}
+
+// TestRun_ValidateCaseError covers the validate error path (olifant#86): when
+// validate.Run fails, the case is recorded with an Error and NOT counted clean.
+func TestRun_ValidateCaseError(t *testing.T) {
+	t.Setenv("OLIFANT_SYNTH_BACKEND", "ollama")
+	t.Setenv("OLIFANT_OLLAMA_URL", "http://127.0.0.1:1") // dead → embed/synth fails
+	t.Setenv("OLIFANT_CHROMA_URL", "http://127.0.0.1:1")
+	t.Setenv("OLIFANT_EMBEDDER", "bge-m3")
+	t.Setenv("OLIFANT_SYNTHESIZER", "synth-m")
+
+	root := t.TempDir()
+	kb := filepath.Join(root, "knowledge-base")
+	if err := os.MkdirAll(kb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	suite := &Suite{SuiteID: "verr", Cases: []Case{
+		{ID: "v-err", Scope: []string{"backend"}, Claim: "x is tenant-scoped", Diff: "diff --git a/x b/x\n+y\n",
+			Expected: &Expected{Verdict: "validated"}},
+	}}
+	report, err := Run(context.Background(), RunConfig{Suite: suite, PlatformRoot: root, KBRoot: kb, OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Cases) != 1 || report.Cases[0].Error == "" {
+		t.Fatalf("expected a recorded validate error, got %+v", report.Cases)
+	}
+	if report.CleanCases != 0 {
+		t.Errorf("errored validate case must not count clean: CleanCases=%d", report.CleanCases)
 	}
 }
