@@ -85,7 +85,9 @@ SUBCOMMANDS:
   run          --plan <file> — execute a prompt-plan via PSP runner
   eval         run --suite <file> — execute an eval suite battery
   validate     --claim <ref> --diff <ref> — post-Claude claim-vs-evidence audit
-  promote      status | set | demote — charter §7 verdict-surface promotion state (challenge/validate)
+  promote      status | set | demote | reconcile — charter §7 verdict-surface promotion state (challenge/validate)
+  harvest      run | accept — mine reactions ⨝ turns into human-gated proposals (eval cases / corpus gaps / dict terms)
+  retrieve     "<question>" — top-N scoped, cite-tagged KB chunks (retrieval-instead-of-reading; scope inferred from cwd)
   digest       <path> — cite-gated, SHA-cached local-model summary of one artifact
   history      scan — walk repo commit history and emit JSONL training data
   dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB
