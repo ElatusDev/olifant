@@ -24,25 +24,31 @@ func promptCheck(args []string) int {
 	verbose := fs.Bool("v", false, "list resolved cites too, not just failures")
 	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
 	kbRootFlag := fs.String("kb-root", "", "resolve bare IDs + KB path cites against this KB tree (default: OLIFANT_KB_ROOT, then findUp) — pin to a branch worktree when the doc cites artifacts not yet on the shared checkout (olifant#79)")
+	gitRef := fs.String("git-ref", "", "resolve KB cites from this git ref's blobs (e.g. origin/main) instead of a working tree — no pinned worktree needed (olifant#90)")
 	_ = fs.Parse(args)
 
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "olifant prompt check: usage: olifant prompt check [-kb-root <tree>] <doc.md>")
+		fmt.Fprintln(os.Stderr, "olifant prompt check: usage: olifant prompt check [-kb-root <tree> | -git-ref <ref>] <doc.md>")
 		return 2
 	}
 	docPath := fs.Arg(0)
 
-	// Same tree-pinning lineage as the eval gate (D224/D227): the pin moves
-	// kbRoot only — repo path cites keep resolving against the REAL platform
-	// root from findUp (a pinned worktree's parent is not the platform).
-	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
+	// Same tree-pinning lineage as the eval gate (D224/D227): the pin moves the
+	// KB tree only — repo path cites keep resolving against the REAL platform
+	// root from findUp. -git-ref reads the ref's blobs directly, no worktree
+	// (olifant#90); a bad ref is a hard error, never a working-tree fallback.
+	kb, kbRoot, platformRoot, terr := resolveKBTree(*kbRootFlag, *gitRef)
 	if kbRoot == "" {
 		fmt.Fprintln(os.Stderr, "olifant prompt check: knowledge-base not found in cwd ancestors (or pass -kb-root)")
 		return 2
 	}
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, "olifant prompt check:", terr)
+		return 2
+	}
 
 	start := time.Now()
-	resolver, err := promptgate.NewResolver(platformRoot, kbRoot)
+	resolver, err := promptgate.NewResolverTree(platformRoot, kb)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "olifant prompt check:", err)
 		return 2
@@ -71,10 +77,14 @@ func promptCheck(args []string) int {
 	fmt.Print(string(out))
 	// The Layer-1 scan reads the KB WORKING TREE — a stale checkout yields
 	// false unresolveds, so surface which ref was actually judged against.
+	checkout := kbCheckoutRef(kbRoot)
+	if *gitRef != "" {
+		checkout = *gitRef + " (git-ref)"
+	}
 	fmt.Fprintf(os.Stderr, "# elapsed=%s resolved=%d stale=%d unresolved=%d known_artifacts=%d kb_checkout=%s\n",
 		time.Since(start).Round(time.Millisecond),
 		report.Resolved, report.Stale, report.Unresolved, resolver.KnownArtifactCount(),
-		kbCheckoutRef(kbRoot))
+		checkout)
 
 	if !*noRecord {
 		verdict := "pass"

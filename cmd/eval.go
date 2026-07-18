@@ -13,6 +13,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/config"
 	"github.com/ElatusDev/olifant/internal/eval"
+	"github.com/ElatusDev/olifant/internal/kbtree"
 )
 
 // Eval dispatches `olifant eval <run|...>`.
@@ -340,6 +341,28 @@ func resolveRoots(kbRootFlag string) (kbRoot, platformRoot string) {
 		}
 	}
 	return kbRoot, platformRoot
+}
+
+// resolveKBTree builds the tree KB cite resolution reads from. With gitRef set,
+// KB cites resolve from that ref's blobs (git run in the KB checkout dir) —
+// decoupled from checkout state, no pinned worktree (olifant#90 / EV-F1);
+// otherwise from the working tree (kbtree.FS). platformRoot (for repo cites) is
+// always the real filesystem root (D227). Returns kbRoot=="" when the KB dir is
+// not found; a non-nil error means the git ref was bad (never a silent
+// working-tree fallback, D-GR4).
+func resolveKBTree(kbRootFlag, gitRef string) (kb kbtree.Tree, kbRoot, platformRoot string, err error) {
+	kbRoot, platformRoot = resolveRoots(kbRootFlag)
+	if kbRoot == "" {
+		return nil, "", "", nil
+	}
+	if strings.TrimSpace(gitRef) != "" {
+		gt, gErr := kbtree.Git(kbRoot, gitRef)
+		if gErr != nil {
+			return nil, kbRoot, platformRoot, gErr
+		}
+		return gt, kbRoot, platformRoot, nil
+	}
+	return kbtree.FS(kbRoot), kbRoot, platformRoot, nil
 }
 
 // driftLog appends a three-state (PASS/FAIL/SKIPPED) line to the nightly
