@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ElatusDev/olifant/internal/kbtree"
 	"gopkg.in/yaml.v3"
 )
 
@@ -252,6 +253,23 @@ func FileSHA256(path string) (string, error) {
 	if os.IsNotExist(err) {
 		return "", nil
 	}
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// TreeSHA256 is FileSHA256 over a kbtree.Tree: the hex SHA-256 of the
+// KB-relative file's bytes, with a missing file hashing to the empty string
+// with no error (the same optional-fingerprint degrade). Identical content
+// yields the identical digest in both, so receipts minted from a git ref's
+// blobs are indistinguishable from worktree-minted ones (olifant#95 AC3).
+func TreeSHA256(kb kbtree.Tree, rel string) (string, error) {
+	if !kb.Exists(rel) {
+		return "", nil
+	}
+	raw, err := kb.ReadFile(rel)
 	if err != nil {
 		return "", err
 	}

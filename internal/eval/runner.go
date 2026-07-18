@@ -10,6 +10,7 @@ import (
 
 	"github.com/ElatusDev/olifant/internal/challenge"
 	"github.com/ElatusDev/olifant/internal/config"
+	"github.com/ElatusDev/olifant/internal/kbtree"
 	synthlib "github.com/ElatusDev/olifant/internal/synth"
 	"github.com/ElatusDev/olifant/internal/validate"
 	"gopkg.in/yaml.v3"
@@ -19,9 +20,13 @@ import (
 type RunConfig struct {
 	Suite        *Suite
 	PlatformRoot string // for relative file paths
-	KBRoot       string // for short-term writes + validator load
-	OutDir       string // where to write run results
-	Verbose      bool
+	KBRoot       string // validator load when KBTree is nil
+	// KBTree, when set, is the tree the cite validator reads KB artifacts
+	// from (e.g. a git ref's blobs — olifant#95 GR-F1). nil preserves the
+	// prior behavior exactly: a filesystem tree rooted at KBRoot.
+	KBTree  kbtree.Tree
+	OutDir  string // where to write run results
+	Verbose bool
 
 	// V2Collection — non-empty switches retrieval to the RAG-pivot v2 path
 	// (single tag-indexed Chroma collection, scope filtered via $in). Empty
@@ -35,6 +40,13 @@ func LoadSuite(path string) (*Suite, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadSuiteBytes(raw)
+}
+
+// LoadSuiteBytes parses a suite YAML from raw bytes — the source-agnostic
+// half of LoadSuite, so a suite can load from a git ref's blob (olifant#95)
+// with identical validation.
+func LoadSuiteBytes(raw []byte) (*Suite, error) {
 	var s Suite
 	if err := yaml.Unmarshal(raw, &s); err != nil {
 		return nil, err
@@ -64,7 +76,11 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 	if scErr != nil {
 		return nil, scErr
 	}
-	validator, vErr := challenge.NewCiteValidator(cfg.PlatformRoot, cfg.KBRoot)
+	kb := cfg.KBTree
+	if kb == nil {
+		kb = kbtree.FS(cfg.KBRoot)
+	}
+	validator, vErr := challenge.NewCiteValidatorTree(cfg.PlatformRoot, kb)
 	if vErr != nil {
 		fmt.Fprintf(os.Stderr, "eval: validator init failed (%v) — proceeding without\n", vErr)
 		validator = nil
