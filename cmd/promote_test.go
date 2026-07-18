@@ -164,3 +164,74 @@ func TestSplitCSV(t *testing.T) {
 		t.Error("splitCSV(blank) should be nil")
 	}
 }
+
+func writeReconcileFixtures(t *testing.T, blocking bool) (statePath, reactionsPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	statePath = filepath.Join(dir, "promotion-state.yaml")
+	if blocking {
+		if err := promotion.Promote(statePath, "challenge", "D250", []string{"r1", "r2"}, "2026-07-14T00:00:00Z"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+	}
+	reactionsPath = filepath.Join(dir, "reactions.jsonl")
+	line := `{"turn_id":"unknown","ts":"2026-07-15T10:00:00Z","subcommand":"challenge","verdict":"INVALID","reaction":"reject","note":"false block"}` + "\n"
+	if err := os.WriteFile(reactionsPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write reactions: %v", err)
+	}
+	return statePath, reactionsPath
+}
+
+func TestPromoteReconcileDemotes(t *testing.T) {
+	statePath, reactionsPath := writeReconcileFixtures(t, true)
+	if code := Promote([]string{"reconcile", "--state", statePath, "--reactions", reactionsPath}); code != 0 {
+		t.Fatalf("promote reconcile = %d; want 0", code)
+	}
+	st, err := promotion.Load(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.IsBlocking("challenge") {
+		t.Fatal("challenge should be advisory after reconcile")
+	}
+	sf := st.Surfaces["challenge"]
+	if sf.Demotion == nil || sf.Demotion.Reason == "" {
+		t.Fatalf("demotion must record the reaction as reason, got %+v", sf)
+	}
+}
+
+func TestPromoteReconcileDryRunWritesNothing(t *testing.T) {
+	statePath, reactionsPath := writeReconcileFixtures(t, true)
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := Promote([]string{"reconcile", "--dry-run", "-v", "--state", statePath, "--reactions", reactionsPath}); code != 0 {
+		t.Fatalf("promote reconcile --dry-run = %d; want 0", code)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("dry-run must not modify the ledger")
+	}
+}
+
+func TestPromoteReconcileAbsentReactionsNoOp(t *testing.T) {
+	statePath := promoteStateFile(t)
+	if code := Promote([]string{"reconcile", "--state", statePath, "--reactions", filepath.Join(t.TempDir(), "nope.jsonl")}); code != 0 {
+		t.Fatalf("absent reactions should be a clean no-op exit 0, got %d", code)
+	}
+}
+
+func TestPromoteReconcileCorruptStateErrors(t *testing.T) {
+	_, reactionsPath := writeReconcileFixtures(t, false)
+	statePath := promoteStateFile(t)
+	if err := os.WriteFile(statePath, []byte(":\nnot yaml : ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Promote([]string{"reconcile", "--state", statePath, "--reactions", reactionsPath}); code != 2 {
+		t.Fatalf("corrupt state should error (2), got %d", code)
+	}
+}

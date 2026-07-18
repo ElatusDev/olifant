@@ -10,14 +10,16 @@ import (
 	"github.com/ElatusDev/olifant/internal/promotion"
 )
 
-// Promote dispatches `olifant promote <status|set|demote>` — the charter §7
-// promotion-state ledger for the challenge/validate verdict surfaces
-// (olifant#87). `set` promotes a surface to blocking (naming its decision +
-// receipt evidence); `demote` flips it back to advisory (the wired §7 demotion
-// path, AC4). The enforcement in Challenge/Validate reads this ledger.
+// Promote dispatches `olifant promote <status|set|demote|reconcile>` — the
+// charter §7 promotion-state ledger for the challenge/validate verdict
+// surfaces (olifant#87). `set` promotes a surface to blocking (naming its
+// decision + receipt evidence); `demote` flips it back to advisory (the wired
+// §7 demotion path, AC4); `reconcile` auto-invokes that flip from confirmed
+// false-block reaction labels (the §7 "automatic" trigger, olifant#93). The
+// enforcement in Challenge/Validate reads this ledger.
 func Promote(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "olifant promote: missing action (status|set|demote)")
+		fmt.Fprintln(os.Stderr, "olifant promote: missing action (status|set|demote|reconcile)")
 		return 2
 	}
 	action, rest := args[0], args[1:]
@@ -28,6 +30,8 @@ func Promote(args []string) int {
 		return promoteSet(rest)
 	case "demote":
 		return promoteDemote(rest)
+	case "reconcile":
+		return promoteReconcile(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "olifant promote: unknown action %q\n", action)
 		return 2
@@ -125,6 +129,63 @@ func promoteDemote(args []string) int {
 		return 2
 	}
 	fmt.Printf("demoted %s -> advisory (reason: %s)\n", surface, *reason)
+	return 0
+}
+
+// promoteReconcile runs the §7 auto-demotion trigger (olifant#93): a
+// deterministic, offline scan of the reaction side-log that demotes a promoted
+// surface on a confirmed false block newer than its promotion. -dry-run is the
+// operator audit view (evaluates everything, writes nothing). Exit 0 whether
+// or not anything demoted (a demotion is a successful reconcile); unreadable
+// state is an error.
+func promoteReconcile(args []string) int {
+	fs := flag.NewFlagSet("promote reconcile", flag.ExitOnError)
+	statePath := fs.String("state", "", "promotion-state ledger path (default: ~/.olifant/promotion-state.yaml)")
+	reactionsPath := fs.String("reactions", "", "reaction side-log path (default: ~/.olifant/reactions.jsonl)")
+	kbRoot := fs.String("kb-root", "", "KB root for the optional turn join (supplies `proceed`; empty = verdict map only)")
+	dryRun := fs.Bool("dry-run", false, "evaluate and report; never demote")
+	verbose := fs.Bool("v", false, "print every skipped signal with its reason")
+	_ = fs.Parse(args)
+
+	path, err := promoteStatePath(*statePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "olifant promote: %v\n", err)
+		return 2
+	}
+	reactions := *reactionsPath
+	if reactions == "" {
+		reactions, _, _ = harvestPaths()
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	rep, err := promotion.Reconcile(promotion.ReconcileConfig{
+		ReactionsPath: reactions,
+		StatePath:     path,
+		KBRoot:        *kbRoot,
+		DryRun:        *dryRun,
+		Now:           now,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "olifant promote reconcile: %v\n", err)
+		return 2
+	}
+	if rep.ReactionsAbsent {
+		fmt.Printf("reconcile: no reaction side-log at %s — nothing to read\n", reactions)
+		return 0
+	}
+	for _, d := range rep.Demoted {
+		fmt.Printf("%s %s -> advisory (%s)\n", d.Action, d.Surface, d.Reason)
+	}
+	if *verbose {
+		for _, s := range rep.Skipped {
+			fmt.Printf("# skip %s ts=%s: %s\n", s.Surface, s.TS, s.Reason)
+		}
+		for _, m := range rep.Malformed {
+			fmt.Printf("# malformed %s\n", m)
+		}
+	}
+	fmt.Printf("reconcile: %d demoted, %d skipped, %d malformed%s\n",
+		len(rep.Demoted), len(rep.Skipped), len(rep.Malformed),
+		map[bool]string{true: " (dry-run — ledger untouched)", false: ""}[*dryRun])
 	return 0
 }
 
