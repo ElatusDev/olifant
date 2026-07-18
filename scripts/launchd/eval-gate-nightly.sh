@@ -70,6 +70,14 @@ note() {
     printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$DRIFT"
 }
 
+# 0) §7 auto-demotion trigger (olifant#93 D-DT5): reconcile the promotion
+#    ledger against confirmed false-block reaction labels. Offline and
+#    sub-second; no -kb-root (the pinned worktree carries no untracked turn
+#    records, so the verdict map is the honest evidence source here). A
+#    failure never skips the gate.
+rcout=$(./bin/olifant promote reconcile 2>&1) || note "RECONCILE FAILED: $(echo "$rcout" | tail -1)"
+echo "$rcout" | grep -q "^demoted " && note "RECONCILE: $(echo "$rcout" | grep '^demoted ' | tr '\n' ';')"
+
 # 1) code_* — manifest-diff incremental (olifant#82 D-FF2).
 rsout=$(./bin/olifant repo sync -kb-root "$KBWT" 2>&1) || note "REPO SYNC FAILED: $(echo "$rsout" | tail -1)"
 echo "$rsout" | grep -q "^repo sync synced" && note "REPO SYNC: $(echo "$rsout" | tail -1)"
