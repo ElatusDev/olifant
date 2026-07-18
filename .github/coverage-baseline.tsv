@@ -30,6 +30,7 @@ github.com/ElatusDev/olifant/internal/dictionary	92
 github.com/ElatusDev/olifant/internal/embedder	85
 github.com/ElatusDev/olifant/internal/eval	91
 github.com/ElatusDev/olifant/internal/ollama	95
+github.com/ElatusDev/olifant/internal/promotion	84
 github.com/ElatusDev/olifant/internal/prompt	88
 github.com/ElatusDev/olifant/internal/psp	85
 github.com/ElatusDev/olifant/internal/repos	87
