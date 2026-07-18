@@ -58,9 +58,49 @@ type suiteSpec struct {
 	Optional bool
 }
 
+// kbReader abstracts the gate's KB reads across its two modes (olifant#95
+// GR-F1). fs mode (tree nil): suite paths are absolute (kbRoot-joined, as
+// always) and reads go through os — byte-identical to the pre-#95 path. git
+// mode (tree set): paths are ref-relative and reads come from the ref's
+// blobs. Same content ⇒ same digests either way (eval.TreeSHA256 contract).
+type kbReader struct {
+	tree kbtree.Tree // nil = fs mode
+}
+
+func (r kbReader) fileSHA(path string) (string, error) {
+	if r.tree == nil {
+		return eval.FileSHA256(path)
+	}
+	return eval.TreeSHA256(r.tree, path)
+}
+
+func (r kbReader) loadSuite(path string) (*eval.Suite, error) {
+	if r.tree == nil {
+		return eval.LoadSuite(path)
+	}
+	raw, err := r.tree.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return eval.LoadSuiteBytes(raw)
+}
+
+// userEvalRunsDir is the git-ref-mode run-output home: the ref governs
+// reads, outputs go user-local (outside every corpus walk — AP184 by
+// construction; mirrors the receipts/lns convention).
+func userEvalRunsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "olifant-eval-runs")
+	}
+	return filepath.Join(home, ".olifant", "eval-runs")
+}
+
 // defaultSuiteSet is the ordered set `eval gate` / `eval gate-check` cover
 // when no -suite is given: the locked synthetic baseline plus the
-// harvest-accepted real-usage suite.
+// harvest-accepted real-usage suite. With kbRoot=="" (git-ref mode) the
+// paths come out ref-relative; a filesystem kbRoot joins to absolute paths
+// exactly as before.
 func defaultSuiteSet(kbRoot string) []suiteSpec {
 	dir := filepath.Join(kbRoot, "eval", "suites")
 	return []suiteSpec{
@@ -99,21 +139,46 @@ func evalGate(args []string) int {
 	timeoutSec := fs.Int("timeout", 3600, "per-suite timeout in seconds")
 	notify := fs.Bool("notify", false, "nightly mode: append to drift.log; macOS notification on FAIL (D-EG5)")
 	kbRootFlag := fs.String("kb-root", "", "resolve suites, corpus manifest, and cite validation against this KB tree (default: findUp); pin to a clean checkout when the shared knowledge-base symlink is on a foreign branch (olifant#71)")
+	gitRef := fs.String("git-ref", "", "resolve suites, manifest fingerprints, and cite validation from this git ref's blobs (e.g. origin/main) — no pinned worktree; run outputs go to ~/.olifant/eval-runs (olifant#95). -suite becomes ref-relative")
+	outFlag := fs.String("out", "", "run-output directory (default: <kb-root>/short-term/eval-runs, or ~/.olifant/eval-runs under -git-ref)")
 	_ = fs.Parse(args)
 
-	kbRoot, platformRoot := resolveRoots(*kbRootFlag)
+	tree, kbRoot, platformRoot, terr := resolveKBTree(*kbRootFlag, *gitRef)
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, "olifant eval gate:", terr)
+		return gateExitUsage
+	}
 	if kbRoot == "" {
 		fmt.Fprintln(os.Stderr, "olifant eval gate: kb-root not found (run from the platform tree, or pass -kb-root)")
 		return gateExitUsage
 	}
+	// fs mode keeps its pre-#95 byte-identical path: nil tree in the reader,
+	// absolute suite paths, outputs under the KB tree.
+	reader := kbReader{}
+	specRoot := kbRoot
+	manifestBase := filepath.Join(kbRoot, "corpus", "v1")
+	outDir := filepath.Join(kbRoot, "short-term", "eval-runs")
+	if *gitRef != "" {
+		reader = kbReader{tree: tree}
+		specRoot = ""
+		manifestBase = filepath.Join("corpus", "v1")
+		outDir = userEvalRunsDir()
+		fmt.Fprintf(os.Stderr, "eval gate: kb=git-ref %s (outputs: %s)\n", *gitRef, outDir)
+	}
+	if *outFlag != "" {
+		outDir = *outFlag
+	}
 
-	corpusSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
-	repoSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "repo-manifest.yaml"))
+	corpusSHA, _ := reader.fileSHA(filepath.Join(manifestBase, "manifest.yaml"))
+	repoSHA, _ := reader.fileSHA(filepath.Join(manifestBase, "repo-manifest.yaml"))
 	env := gateEnv{
 		kbRoot:       kbRoot,
 		platformRoot: platformRoot,
 		logPath:      receiptsLogPath(),
 		baselineDir:  *baselineDir,
+		reader:       reader,
+		tree:         reader.tree,
+		outDir:       outDir,
 		base:         eval.Receipt{GitSHA: headSHA(), CorpusSHA: corpusSHA, RepoSHA: repoSHA, Timestamp: time.Now().UTC().Format(time.RFC3339)},
 		verbose:      *verbose,
 		notify:       *notify,
@@ -123,7 +188,7 @@ func evalGate(args []string) int {
 	// Single-suite / judge-report mode (back-compat): flags set the thresholds.
 	if *suitePath != "" || *reportDir != "" {
 		if *suitePath == "" {
-			*suitePath = filepath.Join(kbRoot, "eval", "suites", "code-feeding-v2.yaml")
+			*suitePath = filepath.Join(specRoot, "eval", "suites", "code-feeding-v2.yaml")
 		}
 		spec := suiteSpec{Path: *suitePath, Cfg: eval.GateConfig{MinClean: *minClean, MaxBlockers: *maxBlockers, MinFirstTry: *minFirstTry}}
 		return gateOneSuite(env, spec, *reportDir, false)
@@ -133,10 +198,10 @@ func evalGate(args []string) int {
 	// order; PASS only when each judged suite passes.
 	if reason := gatePreflight(); reason != "" {
 		fmt.Fprintf(os.Stderr, "GATE SKIPPED (deps): %s\n", reason)
-		for _, spec := range defaultSuiteSet(kbRoot) {
+		for _, spec := range defaultSuiteSet(specRoot) {
 			skipped := env.base
 			skipped.SuiteID = spec.ID
-			skipped.SuiteSHA, _ = eval.FileSHA256(spec.Path)
+			skipped.SuiteSHA, _ = reader.fileSHA(spec.Path)
 			skipped.Verdict = "SKIPPED"
 			skipped.OverrideReason = reason
 			_ = eval.WriteReceipt("", env.logPath, skipped)
@@ -147,7 +212,7 @@ func evalGate(args []string) int {
 		return gateExitSkipped
 	}
 	anyFail, anySkip, anyUsage := false, false, false
-	for _, spec := range defaultSuiteSet(kbRoot) {
+	for _, spec := range defaultSuiteSet(specRoot) {
 		switch gateOneSuite(env, spec, "", true) {
 		case gateExitFail:
 			anyFail = true
@@ -170,9 +235,13 @@ func evalGate(args []string) int {
 }
 
 // gateEnv carries the invocation-wide state gateOneSuite needs: roots,
-// receipt log, the receipt fields shared by every suite, and output flags.
+// reader (fs or git-ref mode), receipt log, the receipt fields shared by
+// every suite, and output flags.
 type gateEnv struct {
 	kbRoot, platformRoot, logPath, baselineDir string
+	reader                                     kbReader
+	tree                                       kbtree.Tree // nil in fs mode; threads into RunConfig.KBTree
+	outDir                                     string
 	base                                       eval.Receipt
 	verbose, notify                            bool
 	timeoutSec                                 int
@@ -182,7 +251,7 @@ type gateEnv struct {
 // thresholds, and mints its suite-scoped receipt. The returned code covers
 // this suite alone; the caller aggregates.
 func gateOneSuite(env gateEnv, spec suiteSpec, reportDir string, preflighted bool) int {
-	suiteSHA, err := eval.FileSHA256(spec.Path)
+	suiteSHA, err := env.reader.fileSHA(spec.Path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "olifant eval gate: suite fingerprint:", err)
 		return gateExitUsage
@@ -229,7 +298,7 @@ func gateOneSuite(env gateEnv, spec suiteSpec, reportDir string, preflighted boo
 				return gateExitSkipped
 			}
 		}
-		suite, lerr := eval.LoadSuite(spec.Path)
+		suite, lerr := env.reader.loadSuite(spec.Path)
 		if lerr != nil {
 			fmt.Fprintln(os.Stderr, "olifant eval gate: load suite:", lerr)
 			return gateExitUsage
@@ -245,14 +314,15 @@ func gateOneSuite(env gateEnv, spec suiteSpec, reportDir string, preflighted boo
 			Suite:        suite,
 			PlatformRoot: env.platformRoot,
 			KBRoot:       env.kbRoot,
-			OutDir:       filepath.Join(env.kbRoot, "short-term", "eval-runs"),
+			KBTree:       env.tree,
+			OutDir:       env.outDir,
 			Verbose:      env.verbose,
 		})
 		if runErr != nil {
 			fmt.Fprintln(os.Stderr, "olifant eval gate:", runErr)
 			return gateExitFail
 		}
-		runDir = filepath.Join(env.kbRoot, "short-term", "eval-runs", report.RunID)
+		runDir = filepath.Join(env.outDir, report.RunID)
 	}
 	// The file's declared suite_id is the lineage identity (D-RG2).
 	if report.SuiteID != "" {
@@ -397,19 +467,32 @@ func evalGateCheck(args []string) int {
 	fs := flag.NewFlagSet("eval gate-check", flag.ExitOnError)
 	suitePath := fs.String("suite", "", "single suite YAML (default: the full suite set under <kb-root>/eval/suites/)")
 	kbRootFlag := fs.String("kb-root", "", "resolve suites + corpus manifest against this KB tree (default: findUp; olifant#71)")
+	gitRef := fs.String("git-ref", "", "recompute suite + manifest fingerprints from this git ref's blobs (e.g. origin/main) — no pinned worktree (olifant#95). -suite becomes ref-relative")
 	_ = fs.Parse(args)
 
-	kbRoot, _ := resolveRoots(*kbRootFlag)
+	tree, kbRoot, _, terr := resolveKBTree(*kbRootFlag, *gitRef)
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, "olifant eval gate-check:", terr)
+		return gateExitUsage
+	}
 	if kbRoot == "" {
 		fmt.Fprintln(os.Stderr, "olifant eval gate-check: kb-root not found (run from the platform tree, or pass -kb-root)")
 		return gateExitUsage
 	}
-	specs := defaultSuiteSet(kbRoot)
+	reader := kbReader{}
+	specRoot := kbRoot
+	manifestBase := filepath.Join(kbRoot, "corpus", "v1")
+	if *gitRef != "" {
+		reader = kbReader{tree: tree}
+		specRoot = ""
+		manifestBase = filepath.Join("corpus", "v1")
+	}
+	specs := defaultSuiteSet(specRoot)
 	if *suitePath != "" {
 		specs = []suiteSpec{{Path: *suitePath}}
 	}
-	corpusSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "manifest.yaml"))
-	repoSHA, _ := eval.FileSHA256(filepath.Join(kbRoot, "corpus", "v1", "repo-manifest.yaml"))
+	corpusSHA, _ := reader.fileSHA(filepath.Join(manifestBase, "manifest.yaml"))
+	repoSHA, _ := reader.fileSHA(filepath.Join(manifestBase, "repo-manifest.yaml"))
 	gitSHA := headSHA()
 	logPath := receiptsLogPath()
 
@@ -417,7 +500,7 @@ func evalGateCheck(args []string) int {
 	// line per suite in the checked set.
 	if reason := os.Getenv("OLIFANT_EVAL_GATE_SKIP"); reason != "" {
 		for _, spec := range specs {
-			suiteSHA, _ := eval.FileSHA256(spec.Path)
+			suiteSHA, _ := reader.fileSHA(spec.Path)
 			_ = eval.WriteReceipt("", logPath, eval.Receipt{
 				Verdict: "OVERRIDE", SuiteID: spec.ID, GitSHA: gitSHA, SuiteSHA: suiteSHA, CorpusSHA: corpusSHA, RepoSHA: repoSHA,
 				OverrideReason: reason, Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -429,7 +512,7 @@ func evalGateCheck(args []string) int {
 
 	stale := false
 	for _, spec := range specs {
-		suiteSHA, err := eval.FileSHA256(spec.Path)
+		suiteSHA, err := reader.fileSHA(spec.Path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "olifant eval gate-check: suite fingerprint:", err)
 			return gateExitUsage

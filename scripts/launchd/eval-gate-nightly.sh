@@ -29,6 +29,13 @@ WT="$(dirname "$REPO")/worktrees/olifant-eval-gate-nightly"
 # concurrent instance may have parked on a feature branch — false-failing the
 # drift backstop. A dedicated origin/main KB worktree, passed via -kb-root,
 # makes the nightly deterministic w.r.t. main regardless of the symlink.
+#
+# This worktree is PROTECTED, not legacy (olifant#95 GR-F1): `eval gate
+# -git-ref` exists for operator mints, but the nightly cannot use it —
+# (a) repo/history/corpus sync WRITE manifests here and the auto-PR
+# commits+pushes from this tree; (b) the gate below must fingerprint the
+# FRESHLY-SYNCED manifests before that PR lands — a ref read would
+# fingerprint stale pre-sync blobs and silently break receipt semantics.
 KBREPO="$(dirname "$REPO")/platform-knowledge-base"
 KBWT="$(dirname "$REPO")/worktrees/kb-eval-gate-nightly"
 DRIFT="$HOME/.olifant/eval-gate/drift.log"

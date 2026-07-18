@@ -27,6 +27,12 @@ func Git(repoDir, ref string) (Tree, error) {
 	if strings.TrimSpace(ref) == "" {
 		return nil, fmt.Errorf("kbtree: empty git ref")
 	}
+	// A `-`-prefixed value would reach git as a FLAG, not a ref (argument
+	// injection). Git refnames cannot begin with `-` (git-check-ref-format),
+	// so rejecting is lossless (olifant#95 AC6, the #90 review nit).
+	if strings.HasPrefix(strings.TrimSpace(ref), "-") {
+		return nil, fmt.Errorf("kbtree: invalid git ref %q (must not start with '-')", ref)
+	}
 	// One `ls-tree -r <ref>` lists every tracked path + its blob sha. A bad ref
 	// makes git exit non-zero — surfaced as a named error, not a fallback.
 	out, err := runGit(repoDir, "ls-tree", "-r", ref)

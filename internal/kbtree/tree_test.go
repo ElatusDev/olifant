@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -159,5 +160,13 @@ func TestFSGitEquivalence(t *testing.T) {
 	sort.Strings(gg)
 	if !reflect.DeepEqual(fg, gg) {
 		t.Errorf("Glob fs≠git: %v vs %v", fg, gg)
+	}
+}
+
+func TestGitRejectsDashPrefixedRef(t *testing.T) {
+	for _, ref := range []string{"-", "--help", " --output=/tmp/x"} {
+		if _, err := Git(t.TempDir(), ref); err == nil || !strings.Contains(err.Error(), "must not start with '-'") {
+			t.Errorf("Git(%q) should reject dash-prefixed ref, got err=%v", ref, err)
+		}
 	}
 }
