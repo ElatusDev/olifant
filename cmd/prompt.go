@@ -23,6 +23,14 @@ func Prompt(args []string) int {
 	}
 	action, rest := args[0], args[1:]
 	switch action {
+	case "help", "--help", "-h":
+		fmt.Println(`olifant prompt — RAG-grounded prompt tooling
+
+ACTIONS:
+  build "<goal>"   generate a PSP plan from a goal via retrieve + synth
+  context "<goal>" retrieval-only PRE bookend (cite-tagged chunks, no synth)
+  check <doc.md>   offline cite gate on a document (-kb-root | -git-ref pin the tree)`)
+		return 0
 	case "build":
 		return promptBuild(rest)
 	case "context":
