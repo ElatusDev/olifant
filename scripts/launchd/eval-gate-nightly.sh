@@ -68,7 +68,13 @@ fi
 err=$(git -C "$KBWT" checkout --detach origin/main --quiet 2>&1) || skip "kb worktree checkout: $err"
 
 cd "$WT" || skip "worktree cd failed"
-err=$(/opt/homebrew/bin/go build -o bin/olifant . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
+OLIBIN="$HOME/.olifant/eval-gate/bin/olifant"
+mkdir -p "$(dirname "$OLIBIN")"
+# Build to the INTERNAL disk and exec from there: launchd-context dyld hangs
+# mmap-exec of binaries on the platform volume (TCC/volume stall class — the
+# same reason this script itself lives under ~/.olifant). Observed 2026-07-19:
+# 12h+ dyld wedge in mapFileReadOnly on "$OLIBIN" (olifant#101).
+err=$(/opt/homebrew/bin/go build -o "$OLIBIN" . 2>&1) || skip "go build: $(echo "$err" | tail -1)"
 
 # Family freshness composition (olifant#82 D-FF7, extending olifant#77
 # D-CS4/D-CS5): reconcile EVERY family the gate's retrieval substrate
@@ -87,16 +93,16 @@ note() {
 #    sub-second; no -kb-root (the pinned worktree carries no untracked turn
 #    records, so the verdict map is the honest evidence source here). A
 #    failure never skips the gate.
-rcout=$(./bin/olifant promote reconcile 2>&1) || note "RECONCILE FAILED: $(echo "$rcout" | tail -1)"
+rcout=$("$OLIBIN" promote reconcile 2>&1) || note "RECONCILE FAILED: $(echo "$rcout" | tail -1)"
 echo "$rcout" | grep -q "^demoted " && note "RECONCILE: $(echo "$rcout" | grep '^demoted ' | tr '\n' ';')"
 
 # 1) code_* — manifest-diff incremental (olifant#82 D-FF2).
-rsout=$(./bin/olifant repo sync -kb-root "$KBWT" 2>&1) || note "REPO SYNC FAILED: $(echo "$rsout" | tail -1)"
+rsout=$("$OLIBIN" repo sync -kb-root "$KBWT" 2>&1) || note "REPO SYNC FAILED: $(echo "$rsout" | tail -1)"
 echo "$rsout" | grep -q "^repo sync synced" && note "REPO SYNC: $(echo "$rsout" | tail -1)"
 
 # 2) history_* / code_history_* — incremental from the cursor; the index
 #    advances the cursor itself (scan-then-index would starve the index).
-hiout=$(./bin/olifant history index -update-manifest -kb-root "$KBWT" -platform-root "$(dirname "$REPO")" 2>&1) \
+hiout=$("$OLIBIN" history index -update-manifest -kb-root "$KBWT" -platform-root "$(dirname "$REPO")" 2>&1) \
     || note "HISTORY INDEX FAILED: $(echo "$hiout" | tail -1)"
 echo "$hiout" | grep -q "manifest advanced" && note "HISTORY: $(echo "$hiout" | grep 'commit chunks upserted' | tail -1 | tr -s ' ')"
 
@@ -112,7 +118,7 @@ if [ -n "$FMSRC" ]; then
         for sc in universal backend webapp mobile e2e infra platform_process; do
             curl -s -o /dev/null -X DELETE "http://localhost:8000/api/v2/tenants/default_tenant/databases/default_database/collections/failure_modes_$sc" || true
         done
-        if fmout=$(./bin/olifant dataset index -kb-root "$KBWT" 2>&1); then
+        if fmout=$("$OLIBIN" dataset index -kb-root "$KBWT" 2>&1); then
             printf '%s' "$fmsha" > "$FMMARK"
             note "FAILURE-MODES REINDEXED: $(basename "$FMSRC")"
         else
@@ -122,7 +128,7 @@ if [ -n "$FMSRC" ]; then
 fi
 
 # 4) corpus_* — incremental (olifant#77 D-CS5), unchanged.
-syncout=$(./bin/olifant corpus sync -kb-root "$KBWT" 2>&1) || note "SYNC FAILED: $(echo "$syncout" | tail -1)"
+syncout=$("$OLIBIN" corpus sync -kb-root "$KBWT" 2>&1) || note "SYNC FAILED: $(echo "$syncout" | tail -1)"
 echo "$syncout" | grep -q "corpus sync synced" && note "SYNC: $(echo "$syncout" | grep 'corpus sync' | tail -1)"
 
 # 5) Land every changed state file in ONE auto-PR (corpus manifest,
@@ -150,4 +156,4 @@ if ! git -C "$KBWT" diff --quiet -- corpus/v1/manifest.yaml corpus/v1/repo-manif
     git -C "$KBWT" checkout --detach HEAD --quiet 2>/dev/null || true
 fi
 
-exec ./bin/olifant eval gate --notify -kb-root "$KBWT"
+exec "$OLIBIN" eval gate --notify -kb-root "$KBWT"
