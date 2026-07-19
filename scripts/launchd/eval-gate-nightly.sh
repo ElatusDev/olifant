@@ -1,8 +1,13 @@
 #!/bin/sh
-# Nightly eval-gate drift backstop (#16 E3, D-EG5). Runs `olifant eval gate
+# Daily eval-gate drift backstop (#16 E3, D-EG5). Runs `olifant eval gate
 # --notify` against a clean origin/main checkout in a dedicated worktree
 # under platform/worktrees/ (kb-root discovery walks up from cwd) — never
 # the dev working tree.
+#
+# Scheduled at 08:00 (was 02:30): the machine and stack (colima chroma
+# port-forward, tailnet ollama) are far more likely up at the start of the
+# workday, and the ~30-min run proceeds in parallel with normal work. The
+# file/label keep the historical "nightly" name (rename churn > value).
 #
 # Installed to ~/.olifant/eval-gate/nightly.sh (launchd TCC denies executing
 # scripts on removable volumes). Accessing the platform volume from launchd
