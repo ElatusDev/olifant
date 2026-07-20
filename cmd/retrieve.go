@@ -17,6 +17,30 @@ import (
 	"github.com/ElatusDev/olifant/internal/shortterm"
 )
 
+// adviceRuleDocTypes is the allow-list of corpus doc-types surfaced by
+// `retrieve --file` advice: the rules + tech guides actionable at code-authoring
+// time. Everything else (workflow, prompt, retro, template, skill, audit,
+// view, memory…) is process/meta noise that out-competes the rules on distance.
+// Filtering is done in Go over a larger fast pool rather than via a Chroma
+// where-filter, which full-scans and adds ~14 s on these collections
+// (olifant#106, P3 live finding).
+var adviceRuleDocTypes = map[string]bool{
+	"anti_pattern": true, "pattern": true, "standard": true, "decision": true,
+	"doc": true, "architecture": true, "claude_md": true,
+}
+
+// File advice over-fetches (max of TopN×factor and advicePoolMin) before the Go
+// rule-filter, because rule chunks rank low by distance against process docs —
+// a small pool starves them (P3 live finding: pool 40 → 2 rules, pool 120 → 11).
+const (
+	advicePoolFactor = 5
+	advicePoolMin    = 120
+)
+
+// adviceNoiseSourcePrefixes drop non-code "doc"-typed sources that the doc_type
+// allow-list can't distinguish (memory snapshots, human usage docs, skill docs).
+var adviceNoiseSourcePrefixes = []string{"claude-memory/", "for-you/", ".claude/"}
+
 // repoDirAliases normalizes on-disk directory names to the repo names
 // corpus.ScopeForRepoClaudeMd knows (symlink targets differ from repo names).
 var repoDirAliases = map[string]string{
@@ -91,7 +115,7 @@ func Retrieve(args []string) int {
 	// The --file path is retrieval-only (no synth, D-PP2) and read-only —
 	// the input is a query, never a corpus source (AP184, D-PP6).
 	var goal, displayQuery string
-	var extraFamilies []string
+	var families []string
 	fileMode := *codeFile != ""
 	if fileMode {
 		body, rerr := os.ReadFile(*codeFile)
@@ -106,7 +130,12 @@ func Retrieve(args []string) int {
 		lang := languageHintForPath(*codeFile)
 		goal = codeReviewRequest(lang, *codeFile, string(body), "")
 		displayQuery = "code advice: " + *codeFile
-		extraFamilies = []string{"failure_modes"} // D-PP3: surface "use X not Y"
+		// Rule families only (D-PP3): anti-patterns/patterns/standards/guides
+		// (corpus) + the "use X not Y" corrections (failure_modes) — NOT the
+		// code/history families, whose raw source chunks crowd out rules (P3).
+		// Process/meta doc-types are dropped from the corpus results by the Go
+		// post-filter below (a Chroma where-filter is too slow, P3).
+		families = []string{"corpus", "failure_modes"}
 	} else {
 		goal = strings.TrimSpace(strings.Join(fs.Args(), " "))
 		if goal == "" {
@@ -135,27 +164,56 @@ func Retrieve(args []string) int {
 		}
 	}
 
+	// Rules/anti-patterns live largely in the universal scope — union it in for
+	// file advice so a stack-scoped file still surfaces cross-cutting rules
+	// (nil scopeList = all scopes already includes universal). D-PP5.
+	if fileMode && len(scopeList) > 0 {
+		hasUniversal := false
+		for _, s := range scopeList {
+			if s == "universal" {
+				hasUniversal = true
+				break
+			}
+		}
+		if !hasUniversal {
+			scopeList = append(scopeList, "universal")
+		}
+	}
+
+	// File advice over-fetches, then Go-filters to rule/guide chunks (P3).
+	poolTopN := *topN
+	if fileMode {
+		if poolTopN = *topN * advicePoolFactor; poolTopN < advicePoolMin {
+			poolTopN = advicePoolMin
+		}
+	}
+
 	rt := config.Resolve()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
 	defer cancel()
 
 	start := time.Now()
 	res, err := prompt.BuildContext(ctx, prompt.ContextConfig{
-		Goal:          goal,
-		OllamaURL:     rt.OllamaURL,
-		ChromaURL:     rt.ChromaURL,
-		Embedder:      rt.Embedder,
-		Tenant:        rt.ChromaTenant,
-		Database:      rt.ChromaDatabase,
-		Scopes:        scopeList,
-		TopN:          *topN,
-		MaxChars:      *maxChars,
-		Verbose:       *verbose,
-		ExtraFamilies: extraFamilies,
+		Goal:      goal,
+		OllamaURL: rt.OllamaURL,
+		ChromaURL: rt.ChromaURL,
+		Embedder:  rt.Embedder,
+		Tenant:    rt.ChromaTenant,
+		Database:  rt.ChromaDatabase,
+		Scopes:    scopeList,
+		TopN:      poolTopN,
+		MaxChars:  *maxChars,
+		Verbose:   *verbose,
+		Families:  families,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "olifant retrieve: %v\n(stack down? see [[olifant-stack]]: Tailscale + chromadb port-forward; fall back to reading the docs directly)\n", err)
 		return 1
+	}
+
+	if fileMode {
+		res.Chunks = filterAdviceChunks(res.Chunks, *topN)
+		res.Sources = chunkSources(res.Chunks)
 	}
 
 	var out []byte
@@ -243,6 +301,49 @@ type adviceOutput struct {
 	Avoid       []prompt.ContextChunk `yaml:"avoid,omitempty"`
 	Prefer      []prompt.ContextChunk `yaml:"prefer,omitempty"`
 	Conventions []prompt.ContextChunk `yaml:"conventions,omitempty"`
+}
+
+// filterAdviceChunks keeps only rule/guide corpus chunks + failure-mode
+// corrections (dropping process/meta docs), truncated to keep. Input is already
+// distance-sorted upstream, so order is preserved (olifant#106, P3).
+func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.ContextChunk {
+	out := make([]prompt.ContextChunk, 0, keep)
+	for _, c := range chunks {
+		if adviceNoiseSource(c.Source) {
+			continue
+		}
+		if strings.HasSuffix(c.Scope, "/failure_modes") || adviceRuleDocTypes[c.DocType] {
+			out = append(out, c)
+			if len(out) >= keep {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// adviceNoiseSource reports whether a source is non-code "doc" noise.
+func adviceNoiseSource(src string) bool {
+	for _, p := range adviceNoiseSourcePrefixes {
+		if strings.HasPrefix(src, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// chunkSources returns the unique source paths of chunks, in order.
+func chunkSources(chunks []prompt.ContextChunk) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range chunks {
+		if c.Source == "" || seen[c.Source] {
+			continue
+		}
+		seen[c.Source] = true
+		out = append(out, c.Source)
+	}
+	return out
 }
 
 // adviceBucket classifies a retrieved chunk as something to avoid (anti-patterns

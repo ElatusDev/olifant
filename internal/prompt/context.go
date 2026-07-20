@@ -21,12 +21,15 @@ type ContextConfig struct {
 	// MaxChars caps each chunk body in the output (0 = no cap).
 	MaxChars int
 	Verbose  bool
-	// ExtraFamilies are additional Chroma collection families queried on every
-	// scope, beyond the default {corpus,code,history,code_history}. Empty (the
-	// default) leaves retrieve() behaviour byte-for-byte unchanged; the
-	// code-advice path (`retrieve --file`) sets {"failure_modes"} so the
-	// "use X not Y" corrections surface (D-PP3, olifant#106).
-	ExtraFamilies []string
+	// Families, when non-empty, replaces the default collection-family set
+	// {corpus,code,history,code_history} and queries every listed family on
+	// every scope (no code-scope gating). Empty (the default) leaves
+	// retrieve() behaviour byte-for-byte unchanged. The code-advice path
+	// (`retrieve --file`) sets {"corpus","failure_modes"} so it surfaces the
+	// RULE families — anti-patterns / patterns / standards + the "use X not Y"
+	// corrections — without the raw source-code families crowding them out
+	// (D-PP3, olifant#106; refined at P3 live proof).
+	Families []string
 }
 
 // ContextChunk is one retrieved chunk shaped for skill consumption: the body
@@ -52,16 +55,16 @@ type ContextResult struct {
 // and returns them cite-tagged. It never calls a synthesizer.
 func BuildContext(ctx context.Context, cfg ContextConfig) (*ContextResult, error) {
 	hits, embedMs, retrieveMs, err := retrieve(ctx, retrieveConfig{
-		Goal:          cfg.Goal,
-		OllamaURL:     cfg.OllamaURL,
-		ChromaURL:     cfg.ChromaURL,
-		Embedder:      cfg.Embedder,
-		Tenant:        cfg.Tenant,
-		Database:      cfg.Database,
-		Scopes:        cfg.Scopes,
-		TopN:          cfg.TopN,
-		Verbose:       cfg.Verbose,
-		ExtraFamilies: cfg.ExtraFamilies,
+		Goal:      cfg.Goal,
+		OllamaURL: cfg.OllamaURL,
+		ChromaURL: cfg.ChromaURL,
+		Embedder:  cfg.Embedder,
+		Tenant:    cfg.Tenant,
+		Database:  cfg.Database,
+		Scopes:    cfg.Scopes,
+		TopN:      cfg.TopN,
+		Verbose:   cfg.Verbose,
+		Families:  cfg.Families,
 	})
 	if err != nil {
 		return nil, err

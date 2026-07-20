@@ -119,37 +119,50 @@ func recordingServers(t *testing.T) (ollamaURL, chromaURL string, ensured map[st
 }
 
 // D-PP3: ExtraFamilies opts the code-advice path into failure_modes, while the
-// default retrieve path stays byte-for-byte unchanged (never queries it).
-func TestBuildContext_ExtraFamiliesQueriesFailureModes(t *testing.T) {
+// default retrieve path stays byte-for-byte unchanged (never queries it) and
+// omits the code/history families the default set gates to code scopes.
+func TestBuildContext_FamiliesOverride(t *testing.T) {
 	oURL, cURL, ensured, mu := recordingServers(t)
 	base := ContextConfig{
 		Goal: "g", OllamaURL: oURL, ChromaURL: cURL, Embedder: "m",
 		Scopes: []string{"backend"}, TopN: 3,
 	}
 
-	withFM := base
-	withFM.ExtraFamilies = []string{"failure_modes"}
-	if _, err := BuildContext(context.Background(), withFM); err != nil {
-		t.Fatalf("BuildContext(+failure_modes): %v", err)
+	// Override with the rule-family set: queries corpus + failure_modes, and
+	// NOT the code family (the whole point of the P3 refinement).
+	rules := base
+	rules.Families = []string{"corpus", "failure_modes"}
+	if _, err := BuildContext(context.Background(), rules); err != nil {
+		t.Fatalf("BuildContext(rule families): %v", err)
 	}
 	mu.Lock()
-	got := ensured["failure_modes_backend"]
+	gotFM, gotCorpus, leakedCode := ensured["failure_modes_backend"], ensured["corpus_backend"], ensured["code_backend"]
 	mu.Unlock()
-	if !got {
-		t.Error("ExtraFamilies=[failure_modes] did not query failure_modes_backend")
+	if !gotFM || !gotCorpus {
+		t.Errorf("rule-family override: corpus=%v failure_modes=%v, want both queried", gotCorpus, gotFM)
+	}
+	if leakedCode {
+		t.Error("rule-family override still queried code_backend — must exclude source families")
 	}
 
+	// Default path: no failure_modes, but code_backend (a code scope) IS queried.
+	// Clear in place — the server closure holds this map reference.
 	mu.Lock()
-	ensured["failure_modes_backend"] = false
+	for k := range ensured {
+		delete(ensured, k)
+	}
 	mu.Unlock()
 	if _, err := BuildContext(context.Background(), base); err != nil {
 		t.Fatalf("BuildContext(default): %v", err)
 	}
 	mu.Lock()
-	leaked := ensured["failure_modes_backend"]
+	defFM, defCode := ensured["failure_modes_backend"], ensured["code_backend"]
 	mu.Unlock()
-	if leaked {
+	if defFM {
 		t.Error("default retrieve queried failure_modes — D-PP3 requires default behaviour unchanged")
+	}
+	if !defCode {
+		t.Error("default retrieve did not query code_backend — default behaviour changed")
 	}
 }
 

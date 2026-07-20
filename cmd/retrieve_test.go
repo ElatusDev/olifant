@@ -105,6 +105,37 @@ func TestGroupAdvice_BucketsAndRenders(t *testing.T) {
 	}
 }
 
+func TestFilterAdviceChunks(t *testing.T) {
+	chunks := []prompt.ContextChunk{
+		{Source: "standards/CODE-QUALITY-STANDARD.md", Scope: "universal/corpus", DocType: "standard"},   // keep
+		{Source: "workflows/core-api/x-workflow.md", Scope: "backend/corpus", DocType: "workflow"},       // drop (process)
+		{Source: "eval/failure-modes/v1.yaml#fm1", Scope: "backend/failure_modes"},                       // keep (family)
+		{Source: "claude-memory/projects/x/memory/MEMORY.md", Scope: "universal/corpus", DocType: "doc"}, // drop (noise source)
+		{Source: "for-you/README.md", Scope: "universal/corpus", DocType: "doc"},                         // drop (noise source)
+		{Source: "tech-encyclopedia/backend/java.md", Scope: "backend/corpus", DocType: "doc"},           // keep (guide)
+		{Source: "anti-patterns/catalog.yaml#AP4", Scope: "universal/corpus", DocType: "anti_pattern"},   // keep
+	}
+	got := filterAdviceChunks(chunks, 10)
+	want := map[string]bool{
+		"standards/CODE-QUALITY-STANDARD.md": true,
+		"eval/failure-modes/v1.yaml#fm1":     true,
+		"tech-encyclopedia/backend/java.md":  true,
+		"anti-patterns/catalog.yaml#AP4":     true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("kept %d chunks, want %d: %+v", len(got), len(want), got)
+	}
+	for _, c := range got {
+		if !want[c.Source] {
+			t.Errorf("kept unexpected source %q", c.Source)
+		}
+	}
+	// keep-limit truncates.
+	if trunc := filterAdviceChunks(chunks, 2); len(trunc) != 2 {
+		t.Errorf("truncate to 2: got %d", len(trunc))
+	}
+}
+
 func TestRetrieveFile_EmptyDegradesToExitZero(t *testing.T) {
 	dir := t.TempDir()
 	kbAndCwd(t, dir)
@@ -176,10 +207,13 @@ func TestRetrieveFile_NoSynthAndQueriesFailureModes(t *testing.T) {
 		t.Fatalf("retrieve --file: exit %d, want 0", rc)
 	}
 	mu.Lock()
-	got := ensured["failure_modes_backend"]
+	gotFM, leakedCode := ensured["failure_modes_backend"], ensured["code_backend"]
 	mu.Unlock()
-	if !got {
+	if !gotFM {
 		t.Error("retrieve --file did not query failure_modes_backend (D-PP3)")
+	}
+	if leakedCode {
+		t.Error("retrieve --file queried code_backend — advice must use rule families only (P3)")
 	}
 }
 
