@@ -75,13 +75,8 @@ func Retrieve(args []string) int {
 	timeoutSec := fs.Int("timeout", 60, "overall timeout in seconds")
 	verbose := fs.Bool("v", false, "verbose retrieval log")
 	noRecord := fs.Bool("no-record", false, "do not write a short-term turn record")
+	codeFile := fs.String("file", "", "code file to advise on: retrieval-only avoid/prefer/convention rules (pair-programming T1, olifant#106)")
 	_ = fs.Parse(args)
-
-	question := strings.TrimSpace(strings.Join(fs.Args(), " "))
-	if question == "" {
-		fmt.Fprintln(os.Stderr, `olifant retrieve: missing question — usage: olifant retrieve "<question>"`)
-		return 2
-	}
 
 	found, ok := findUp("knowledge-base/README.md")
 	if !ok {
@@ -91,13 +86,53 @@ func Retrieve(args []string) int {
 	kbRoot := filepath.Dir(found)
 	platformRoot := filepath.Dir(kbRoot)
 
+	// Two intake modes: an NL question, or a code file (--file) framed as a
+	// compliance-review query for fast during-generation advice (olifant#106).
+	// The --file path is retrieval-only (no synth, D-PP2) and read-only —
+	// the input is a query, never a corpus source (AP184, D-PP6).
+	var goal, displayQuery string
+	var extraFamilies []string
+	fileMode := *codeFile != ""
+	if fileMode {
+		body, rerr := os.ReadFile(*codeFile)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "olifant retrieve: read %s: %v\n", *codeFile, rerr)
+			return 2
+		}
+		if strings.TrimSpace(string(body)) == "" {
+			fmt.Fprintf(os.Stderr, "olifant retrieve: %s is empty — no advice to retrieve\n", *codeFile)
+			return 0 // degrade, never error the caller (D-PP7)
+		}
+		lang := languageHintForPath(*codeFile)
+		goal = codeReviewRequest(lang, *codeFile, string(body), "")
+		displayQuery = "code advice: " + *codeFile
+		extraFamilies = []string{"failure_modes"} // D-PP3: surface "use X not Y"
+	} else {
+		goal = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		if goal == "" {
+			fmt.Fprintln(os.Stderr, `olifant retrieve: missing input — usage: olifant retrieve "<question>" | olifant retrieve --file <path>`)
+			return 2
+		}
+		displayQuery = goal
+	}
+
 	var scopeList []string
 	inferred := false
-	if *scopes != "" {
+	switch {
+	case *scopes != "":
 		scopeList = strings.Split(*scopes, ",")
-	} else if cwd, err := os.Getwd(); err == nil {
-		scopeList = inferScopes(cwd, platformRoot)
-		inferred = scopeList != nil
+	case fileMode:
+		// Scope from the code file's location; a tmp/scratch path outside the
+		// platform tree yields nil → all scopes (caller passes -scope, D-PP5).
+		if abs, err := filepath.Abs(*codeFile); err == nil {
+			scopeList = inferScopes(filepath.Dir(abs), platformRoot)
+			inferred = scopeList != nil
+		}
+	default:
+		if cwd, err := os.Getwd(); err == nil {
+			scopeList = inferScopes(cwd, platformRoot)
+			inferred = scopeList != nil
+		}
 	}
 
 	rt := config.Resolve()
@@ -106,16 +141,17 @@ func Retrieve(args []string) int {
 
 	start := time.Now()
 	res, err := prompt.BuildContext(ctx, prompt.ContextConfig{
-		Goal:      question,
-		OllamaURL: rt.OllamaURL,
-		ChromaURL: rt.ChromaURL,
-		Embedder:  rt.Embedder,
-		Tenant:    rt.ChromaTenant,
-		Database:  rt.ChromaDatabase,
-		Scopes:    scopeList,
-		TopN:      *topN,
-		MaxChars:  *maxChars,
-		Verbose:   *verbose,
+		Goal:          goal,
+		OllamaURL:     rt.OllamaURL,
+		ChromaURL:     rt.ChromaURL,
+		Embedder:      rt.Embedder,
+		Tenant:        rt.ChromaTenant,
+		Database:      rt.ChromaDatabase,
+		Scopes:        scopeList,
+		TopN:          *topN,
+		MaxChars:      *maxChars,
+		Verbose:       *verbose,
+		ExtraFamilies: extraFamilies,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "olifant retrieve: %v\n(stack down? see [[olifant-stack]]: Tailscale + chromadb port-forward; fall back to reading the docs directly)\n", err)
@@ -123,14 +159,19 @@ func Retrieve(args []string) int {
 	}
 
 	var out []byte
-	if *format == "md" {
-		out = []byte(renderMD(question, res))
-	} else {
-		out, err = yaml.Marshal(contextOutput{Goal: question, Scopes: scopeList, Chunks: res.Chunks})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "olifant retrieve: marshal:", err)
-			return 1
-		}
+	switch {
+	case fileMode && *format == "md":
+		out = []byte(renderAdviceMD(displayQuery, res))
+	case fileMode:
+		out, err = yaml.Marshal(groupAdvice(displayQuery, scopeList, res))
+	case *format == "md":
+		out = []byte(renderMD(goal, res))
+	default:
+		out, err = yaml.Marshal(contextOutput{Goal: goal, Scopes: scopeList, Chunks: res.Chunks})
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "olifant retrieve: marshal:", err)
+		return 1
 	}
 	fmt.Print(string(out))
 
@@ -153,11 +194,11 @@ func Retrieve(args []string) int {
 	if !*noRecord {
 		ts := time.Now()
 		rec := &shortterm.TurnRecord{
-			TurnID:     shortterm.NewTurnID(ts, question),
+			TurnID:     shortterm.NewTurnID(ts, displayQuery),
 			TS:         ts.UTC().Format(time.RFC3339),
 			Subcommand: "retrieve",
 			Scope:      scopeList,
-			Request:    question,
+			Request:    displayQuery,
 			Retrieve: &shortterm.RetrieveBlock{
 				Inferred:       inferred,
 				RetrievedCount: len(res.Chunks),
@@ -192,4 +233,78 @@ func renderMD(question string, res *prompt.ContextResult) string {
 		fmt.Fprintf(&b, "### %d. %s (%s, d=%.3f)%s\n\n%s\n\n", i+1, c.Source, c.Scope, c.Distance, cites, c.Body)
 	}
 	return b.String()
+}
+
+// adviceOutput is the `retrieve --file` grouping: applicable rules bucketed for
+// the code-authoring moment (olifant#106, D-PP4).
+type adviceOutput struct {
+	Query       string                `yaml:"query"`
+	Scopes      []string              `yaml:"scopes"`
+	Avoid       []prompt.ContextChunk `yaml:"avoid,omitempty"`
+	Prefer      []prompt.ContextChunk `yaml:"prefer,omitempty"`
+	Conventions []prompt.ContextChunk `yaml:"conventions,omitempty"`
+}
+
+// adviceBucket classifies a retrieved chunk as something to avoid (anti-patterns
+// / failure-mode corrections), prefer (proven patterns), or a convention/standard
+// to honor. Family tag (Scope "<scope>/failure_modes") and doc_type are the keys;
+// an AP-cite is the fallback signal.
+func adviceBucket(c prompt.ContextChunk) string {
+	if strings.HasSuffix(c.Scope, "/failure_modes") || c.DocType == "anti_pattern" {
+		return "avoid"
+	}
+	if c.DocType == "pattern" {
+		return "prefer"
+	}
+	for _, cite := range c.Cites {
+		if strings.HasPrefix(cite, "AP") {
+			return "avoid"
+		}
+	}
+	return "convention"
+}
+
+// groupAdvice buckets the retrieved chunks into avoid/prefer/convention.
+func groupAdvice(query string, scopes []string, res *prompt.ContextResult) adviceOutput {
+	out := adviceOutput{Query: query, Scopes: scopes}
+	for _, c := range res.Chunks {
+		switch adviceBucket(c) {
+		case "avoid":
+			out.Avoid = append(out.Avoid, c)
+		case "prefer":
+			out.Prefer = append(out.Prefer, c)
+		default:
+			out.Conventions = append(out.Conventions, c)
+		}
+	}
+	return out
+}
+
+// renderAdviceMD is the session-pasteable grouped rendering for `retrieve --file`.
+func renderAdviceMD(query string, res *prompt.ContextResult) string {
+	g := groupAdvice(query, nil, res)
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n\n", query)
+	writeAdviceBucket(&b, "⛔ Avoid", g.Avoid)
+	writeAdviceBucket(&b, "✅ Prefer", g.Prefer)
+	writeAdviceBucket(&b, "📐 Conventions", g.Conventions)
+	if len(res.Chunks) == 0 {
+		b.WriteString("_No applicable rules retrieved._\n")
+	}
+	return b.String()
+}
+
+func writeAdviceBucket(b *strings.Builder, title string, chunks []prompt.ContextChunk) {
+	if len(chunks) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "### %s\n\n", title)
+	for _, c := range chunks {
+		cites := ""
+		if len(c.Cites) > 0 {
+			cites = " · " + strings.Join(c.Cites, ", ")
+		}
+		fmt.Fprintf(b, "- **%s** (%s)%s\n  %s\n", c.Source, c.Scope, cites, c.Body)
+	}
+	b.WriteString("\n")
 }
