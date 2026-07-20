@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +41,37 @@ const (
 // adviceNoiseSourcePrefixes drop non-code "doc"-typed sources that the doc_type
 // allow-list can't distinguish (memory snapshots, human usage docs, skill docs).
 var adviceNoiseSourcePrefixes = []string{"claude-memory/", "for-you/", ".claude/"}
+
+// codeSignal maps a code construct to a focused retrieval hint. A whole-file
+// embedding is too diffuse to rank specific anti-patterns; a focused signal
+// query surfaces them (P3 diagnosis). This is an advisory, extensible heuristic
+// for the retrieval query — NOT the deterministic linter (that is T3, #105).
+type codeSignal struct {
+	re   *regexp.Regexp
+	hint string
+}
+
+var codeSignals = []codeSignal{
+	{regexp.MustCompile(`\bany\s*\(`), "Mockito any() matcher argument matching"},
+	{regexp.MustCompile(`\bfor\s*\(|\.forEach\(`), "manual loop instead of Java streams"},
+	{regexp.MustCompile(`(?i)"\s*(select|insert|update|delete)\s|@Query`), "raw SQL native query bypassing JPA"},
+	{regexp.MustCompile(`System\.(out|err)\.`), "System.out logging instead of a logger"},
+	{regexp.MustCompile(`catch\s*\([^)]*\)\s*\{\s*\}`), "empty catch block swallowed exception"},
+	{regexp.MustCompile(`@Autowired`), "field injection instead of constructor injection"},
+	{regexp.MustCompile(`(?i)password|secret|api[_-]?key`), "hardcoded secret / credential handling"},
+}
+
+// extractCodeSignals returns a focused query built from the code constructs
+// present in body, or "" if none match (single-query fast path).
+func extractCodeSignals(body string) string {
+	var hints []string
+	for _, s := range codeSignals {
+		if s.re.MatchString(body) {
+			hints = append(hints, s.hint)
+		}
+	}
+	return strings.Join(hints, "; ")
+}
 
 // repoDirAliases normalizes on-disk directory names to the repo names
 // corpus.ScopeForRepoClaudeMd knows (symlink targets differ from repo names).
@@ -114,7 +146,7 @@ func Retrieve(args []string) int {
 	// compliance-review query for fast during-generation advice (olifant#106).
 	// The --file path is retrieval-only (no synth, D-PP2) and read-only —
 	// the input is a query, never a corpus source (AP184, D-PP6).
-	var goal, displayQuery string
+	var goal, displayQuery, codeBody string
 	var families []string
 	fileMode := *codeFile != ""
 	if fileMode {
@@ -132,7 +164,8 @@ func Retrieve(args []string) int {
 		// generic compliance prose, while the raw tokens align to specific rules
 		// (P3 diagnosis — a keyword query surfaced the any() anti-pattern the
 		// framed query missed).
-		goal = string(body)
+		codeBody = string(body)
+		goal = codeBody
 		displayQuery = "code advice: " + *codeFile
 		// Rule families only (D-PP3): anti-patterns/patterns/standards/guides
 		// (corpus) + the "use X not Y" corrections (failure_modes) — NOT the
@@ -196,8 +229,7 @@ func Retrieve(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
 	defer cancel()
 
-	start := time.Now()
-	res, err := prompt.BuildContext(ctx, prompt.ContextConfig{
+	cfg := prompt.ContextConfig{
 		Goal:      goal,
 		OllamaURL: rt.OllamaURL,
 		ChromaURL: rt.ChromaURL,
@@ -209,13 +241,28 @@ func Retrieve(args []string) int {
 		MaxChars:  *maxChars,
 		Verbose:   *verbose,
 		Families:  families,
-	})
+	}
+
+	start := time.Now()
+	res, err := prompt.BuildContext(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "olifant retrieve: %v\n(stack down? see [[olifant-stack]]: Tailscale + chromadb port-forward; fall back to reading the docs directly)\n", err)
 		return 1
 	}
 
 	if fileMode {
+		// Second, focused query built from code signals — the raw-code query
+		// surfaces patterns/conventions, but specific anti-patterns need a
+		// focused query to rank (P3). Only when signals are present, so clean
+		// files keep the single-query fast path.
+		if sig := extractCodeSignals(codeBody); sig != "" {
+			cfg.Goal = sig
+			if res2, err2 := prompt.BuildContext(ctx, cfg); err2 == nil {
+				res.Chunks = append(res.Chunks, res2.Chunks...)
+			} else if *verbose {
+				fmt.Fprintf(os.Stderr, "# signal query skipped: %v\n", err2)
+			}
+		}
 		res.Chunks = filterAdviceChunks(res.Chunks, *topN)
 		res.Sources = chunkSources(res.Chunks)
 	}
@@ -314,8 +361,8 @@ type adviceOutput struct {
 // bucket is best). Truncated to keep total (olifant#106, P3).
 func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.ContextChunk {
 	perBucket := keep/3 + 1
-	counts := map[string]int{}
-	out := make([]prompt.ContextChunk, 0, keep)
+	seen := map[string]bool{}
+	byBucket := map[string][]prompt.ContextChunk{}
 	for _, c := range chunks {
 		if adviceNoiseSource(c.Source) {
 			continue
@@ -323,15 +370,23 @@ func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.Context
 		if !strings.HasSuffix(c.Scope, "/failure_modes") && !adviceRuleDocTypes[c.DocType] {
 			continue
 		}
-		b := adviceBucket(c)
-		if counts[b] >= perBucket {
+		key := c.Source + "\x00" + c.Body
+		if seen[key] {
 			continue
 		}
-		counts[b]++
-		out = append(out, c)
-		if len(out) >= keep {
-			break
+		b := adviceBucket(c)
+		if len(byBucket[b]) >= perBucket {
+			continue
 		}
+		seen[key] = true
+		byBucket[b] = append(byBucket[b], c)
+	}
+	out := make([]prompt.ContextChunk, 0, keep)
+	for _, b := range []string{"avoid", "prefer", "convention"} {
+		out = append(out, byBucket[b]...)
+	}
+	if len(out) > keep {
+		out = out[:keep]
 	}
 	return out
 }

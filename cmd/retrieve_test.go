@@ -136,6 +136,35 @@ func TestFilterAdviceChunks(t *testing.T) {
 	}
 }
 
+func TestExtractCodeSignals(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+		want []string // substrings that must appear; empty = expect no signals
+	}{
+		{"any matcher", "when(repo.save(any())).thenReturn(x);", []string{"any() matcher"}},
+		{"for loop", "for (int i = 0; i < n; i++) {}", []string{"manual loop"}},
+		{"raw sql", `@Query("SELECT * FROM t")`, []string{"raw SQL"}},
+		{"field injection", "@Autowired private Repo repo;", []string{"field injection"}},
+		{"multiple", "for (X x : xs) { when(m.f(any())); }", []string{"any() matcher", "manual loop"}},
+		{"clean", "return tutors.stream().map(Tutor::name).toList();", nil},
+	}
+	for _, c := range cases {
+		got := extractCodeSignals(c.code)
+		if len(c.want) == 0 {
+			if got != "" {
+				t.Errorf("%s: expected no signals, got %q", c.name, got)
+			}
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: signals %q missing %q", c.name, got, w)
+			}
+		}
+	}
+}
+
 func TestRetrieveFile_EmptyDegradesToExitZero(t *testing.T) {
 	dir := t.TempDir()
 	kbAndCwd(t, dir)
