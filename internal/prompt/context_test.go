@@ -2,10 +2,14 @@ package prompt
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/ElatusDev/olifant/internal/ollama"
 )
 
 func TestBuildContext_HappyPath(t *testing.T) {
@@ -70,6 +74,82 @@ func TestBuildContext_ExtractsCitesAndCapsBody(t *testing.T) {
 	}
 	if c.DocType != "decision" {
 		t.Errorf("doc_type = %q, want decision", c.DocType)
+	}
+}
+
+// recordingServers stands up a fake Ollama embedder + a Chroma that records
+// every collection name ensured (queried). Returns the URLs and the recorder.
+func recordingServers(t *testing.T) (ollamaURL, chromaURL string, ensured map[string]bool, mu *sync.Mutex) {
+	t.Helper()
+	ensured = map[string]bool{}
+	mu = &sync.Mutex{}
+	oll := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/embed" {
+			var req ollama.EmbedRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			embs := make([][]float32, len(req.Input))
+			for i := range embs {
+				embs[i] = []float32{0.1, 0.2, 0.3}
+			}
+			_ = json.NewEncoder(w).Encode(ollama.EmbedResponse{Embeddings: embs})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(oll.Close)
+	chr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/collections"):
+			var b struct {
+				Name string `json:"name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			mu.Lock()
+			ensured[b.Name] = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"id":"coll-1","name":"` + b.Name + `"}`))
+		case strings.HasSuffix(r.URL.Path, "/query"):
+			_, _ = w.Write([]byte(`{"ids":[["a"]],"documents":[["d"]],"metadatas":[[{"source":"s"}]],"distances":[[0.1]]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(chr.Close)
+	return oll.URL, chr.URL, ensured, mu
+}
+
+// D-PP3: ExtraFamilies opts the code-advice path into failure_modes, while the
+// default retrieve path stays byte-for-byte unchanged (never queries it).
+func TestBuildContext_ExtraFamiliesQueriesFailureModes(t *testing.T) {
+	oURL, cURL, ensured, mu := recordingServers(t)
+	base := ContextConfig{
+		Goal: "g", OllamaURL: oURL, ChromaURL: cURL, Embedder: "m",
+		Scopes: []string{"backend"}, TopN: 3,
+	}
+
+	withFM := base
+	withFM.ExtraFamilies = []string{"failure_modes"}
+	if _, err := BuildContext(context.Background(), withFM); err != nil {
+		t.Fatalf("BuildContext(+failure_modes): %v", err)
+	}
+	mu.Lock()
+	got := ensured["failure_modes_backend"]
+	mu.Unlock()
+	if !got {
+		t.Error("ExtraFamilies=[failure_modes] did not query failure_modes_backend")
+	}
+
+	mu.Lock()
+	ensured["failure_modes_backend"] = false
+	mu.Unlock()
+	if _, err := BuildContext(context.Background(), base); err != nil {
+		t.Fatalf("BuildContext(default): %v", err)
+	}
+	mu.Lock()
+	leaked := ensured["failure_modes_backend"]
+	mu.Unlock()
+	if leaked {
+		t.Error("default retrieve queried failure_modes — D-PP3 requires default behaviour unchanged")
 	}
 }
 

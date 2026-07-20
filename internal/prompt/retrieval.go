@@ -28,6 +28,9 @@ type retrieveConfig struct {
 	Scopes    []string
 	TopN      int
 	Verbose   bool
+	// ExtraFamilies adds always-queried collection families beyond the
+	// defaults (D-PP3, olifant#106). Empty = unchanged behaviour.
+	ExtraFamilies []string
 }
 
 // allScopes is the default scope set when none is specified.
@@ -68,10 +71,19 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 		scopes = allScopes
 	}
 
+	// Default families/always-set, extended (not mutated) by ExtraFamilies so
+	// the plain retrieve/prompt paths stay byte-for-byte unchanged (D-PP3).
+	families := append([]string(nil), collFamilies...)
+	always := map[string]bool{"corpus": true}
+	for _, f := range cfg.ExtraFamilies {
+		families = append(families, f)
+		always[f] = true
+	}
+
 	retrStart := time.Now()
 	hits = retrieval.QueryScopedFamilies(ctx, cc, qEmb, retrieval.FamilyConfig{
-		Families:       collFamilies,
-		AlwaysFamilies: map[string]bool{"corpus": true},
+		Families:       families,
+		AlwaysFamilies: always,
 		CodeScopes:     codeScopes,
 		Scopes:         scopes,
 		TopN:           cfg.TopN,

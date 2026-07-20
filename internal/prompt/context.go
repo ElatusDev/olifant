@@ -21,6 +21,12 @@ type ContextConfig struct {
 	// MaxChars caps each chunk body in the output (0 = no cap).
 	MaxChars int
 	Verbose  bool
+	// ExtraFamilies are additional Chroma collection families queried on every
+	// scope, beyond the default {corpus,code,history,code_history}. Empty (the
+	// default) leaves retrieve() behaviour byte-for-byte unchanged; the
+	// code-advice path (`retrieve --file`) sets {"failure_modes"} so the
+	// "use X not Y" corrections surface (D-PP3, olifant#106).
+	ExtraFamilies []string
 }
 
 // ContextChunk is one retrieved chunk shaped for skill consumption: the body
@@ -46,15 +52,16 @@ type ContextResult struct {
 // and returns them cite-tagged. It never calls a synthesizer.
 func BuildContext(ctx context.Context, cfg ContextConfig) (*ContextResult, error) {
 	hits, embedMs, retrieveMs, err := retrieve(ctx, retrieveConfig{
-		Goal:      cfg.Goal,
-		OllamaURL: cfg.OllamaURL,
-		ChromaURL: cfg.ChromaURL,
-		Embedder:  cfg.Embedder,
-		Tenant:    cfg.Tenant,
-		Database:  cfg.Database,
-		Scopes:    cfg.Scopes,
-		TopN:      cfg.TopN,
-		Verbose:   cfg.Verbose,
+		Goal:          cfg.Goal,
+		OllamaURL:     cfg.OllamaURL,
+		ChromaURL:     cfg.ChromaURL,
+		Embedder:      cfg.Embedder,
+		Tenant:        cfg.Tenant,
+		Database:      cfg.Database,
+		Scopes:        cfg.Scopes,
+		TopN:          cfg.TopN,
+		Verbose:       cfg.Verbose,
+		ExtraFamilies: cfg.ExtraFamilies,
 	})
 	if err != nil {
 		return nil, err
