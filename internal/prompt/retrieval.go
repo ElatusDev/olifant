@@ -28,6 +28,10 @@ type retrieveConfig struct {
 	Scopes    []string
 	TopN      int
 	Verbose   bool
+	// Families, when non-empty, replaces the default family set and queries
+	// every listed family on every scope (D-PP3, olifant#106). Empty =
+	// unchanged behaviour.
+	Families []string
 }
 
 // allScopes is the default scope set when none is specified.
@@ -68,11 +72,28 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 		scopes = allScopes
 	}
 
+	// Default: {corpus,code,history,code_history} with corpus always-queried
+	// and code families gated to codeScopes. A non-empty cfg.Families replaces
+	// the set and queries every listed family on every scope — the code-advice
+	// path uses {corpus,failure_modes} to get rules without source-code noise
+	// (D-PP3). Default path stays byte-for-byte unchanged.
+	families := collFamilies
+	always := map[string]bool{"corpus": true}
+	codeSc := codeScopes
+	if len(cfg.Families) > 0 {
+		families = cfg.Families
+		always = make(map[string]bool, len(families))
+		for _, f := range families {
+			always[f] = true
+		}
+		codeSc = nil
+	}
+
 	retrStart := time.Now()
 	hits = retrieval.QueryScopedFamilies(ctx, cc, qEmb, retrieval.FamilyConfig{
-		Families:       collFamilies,
-		AlwaysFamilies: map[string]bool{"corpus": true},
-		CodeScopes:     codeScopes,
+		Families:       families,
+		AlwaysFamilies: always,
+		CodeScopes:     codeSc,
 		Scopes:         scopes,
 		TopN:           cfg.TopN,
 		Verbose:        cfg.Verbose,

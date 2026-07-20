@@ -58,6 +58,19 @@ func languageHintForPath(path string) string {
 	}
 }
 
+// codeReviewRequest frames a code file's body as a platform-compliance review
+// request — the shared intake for `challenge --file` (synth verdict) and
+// `retrieve --file` (fast retrieval advice, olifant#106). The embedder caps
+// this at a 3500-char head (retrieval.DefaultEmbedMaxChars); a synth caller
+// sees the full body.
+func codeReviewRequest(lang, path, body, suffix string) string {
+	return fmt.Sprintf(
+		"Review the following %s code for ElatusDev/AkademiaPlus platform compliance.\n"+
+			"File: %s\n\n"+
+			"```%s\n%s\n```%s",
+		lang, path, lang, strings.TrimRight(body, "\n"), suffix)
+}
+
 // Challenge dispatches `olifant challenge "<user request>"`.
 //
 // Two input modes:
@@ -97,11 +110,7 @@ func Challenge(args []string) int {
 		}
 		// Note: the synthesizer sees the full body. The embedder sees a
 		// 3500-char head (single Embed call inside Run() is capped already).
-		request = fmt.Sprintf(
-			"Review the following %s code for ElatusDev/AkademiaPlus platform compliance.\n"+
-				"File: %s\n\n"+
-				"```%s\n%s\n```%s",
-			lang, *codeFile, lang, strings.TrimRight(string(body), "\n"), suffix)
+		request = codeReviewRequest(lang, *codeFile, string(body), suffix)
 	} else {
 		rest := fs.Args()
 		if len(rest) == 0 {
