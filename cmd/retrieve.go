@@ -127,8 +127,12 @@ func Retrieve(args []string) int {
 			fmt.Fprintf(os.Stderr, "olifant retrieve: %s is empty — no advice to retrieve\n", *codeFile)
 			return 0 // degrade, never error the caller (D-PP7)
 		}
-		lang := languageHintForPath(*codeFile)
-		goal = codeReviewRequest(lang, *codeFile, string(body), "")
+		// Query = the raw code (embed caps at a 3500-char head), NOT challenge's
+		// compliance-review frame: the frame's boilerplate pulls retrieval toward
+		// generic compliance prose, while the raw tokens align to specific rules
+		// (P3 diagnosis — a keyword query surfaced the any() anti-pattern the
+		// framed query missed).
+		goal = string(body)
 		displayQuery = "code advice: " + *codeFile
 		// Rule families only (D-PP3): anti-patterns/patterns/standards/guides
 		// (corpus) + the "use X not Y" corrections (failure_modes) — NOT the
@@ -303,20 +307,30 @@ type adviceOutput struct {
 	Conventions []prompt.ContextChunk `yaml:"conventions,omitempty"`
 }
 
-// filterAdviceChunks keeps only rule/guide corpus chunks + failure-mode
-// corrections (dropping process/meta docs), truncated to keep. Input is already
-// distance-sorted upstream, so order is preserved (olifant#106, P3).
+// filterAdviceChunks keeps rule/guide corpus chunks + failure-mode corrections
+// (dropping process/meta docs), balanced across the avoid/prefer/convention
+// buckets so no bucket is starved by another that ranks higher globally — each
+// gets up to keep/3+1 of its best (input is distance-sorted, so first-seen per
+// bucket is best). Truncated to keep total (olifant#106, P3).
 func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.ContextChunk {
+	perBucket := keep/3 + 1
+	counts := map[string]int{}
 	out := make([]prompt.ContextChunk, 0, keep)
 	for _, c := range chunks {
 		if adviceNoiseSource(c.Source) {
 			continue
 		}
-		if strings.HasSuffix(c.Scope, "/failure_modes") || adviceRuleDocTypes[c.DocType] {
-			out = append(out, c)
-			if len(out) >= keep {
-				break
-			}
+		if !strings.HasSuffix(c.Scope, "/failure_modes") && !adviceRuleDocTypes[c.DocType] {
+			continue
+		}
+		b := adviceBucket(c)
+		if counts[b] >= perBucket {
+			continue
+		}
+		counts[b]++
+		out = append(out, c)
+		if len(out) >= keep {
+			break
 		}
 	}
 	return out
