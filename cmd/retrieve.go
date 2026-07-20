@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -52,13 +53,25 @@ type codeSignal struct {
 }
 
 var codeSignals = []codeSignal{
-	{regexp.MustCompile(`\bany\s*\(`), "Mockito any() matcher argument matching"},
-	{regexp.MustCompile(`\bfor\s*\(|\.forEach\(`), "manual loop instead of Java streams"},
-	{regexp.MustCompile(`(?i)"\s*(select|insert|update|delete)\s|@Query`), "raw SQL native query bypassing JPA"},
+	// Java / backend
+	{regexp.MustCompile(`\bany\s*\(|\bany[A-Z]\w*\(`), "Mockito any() matcher argument matching"},
+	{regexp.MustCompile(`\bfor\s*\(|\.forEach\(`), "manual loop instead of streams"},
+	{regexp.MustCompile(`(?i)"\s*(select|insert|update|delete)\s|@Query`), "raw SQL native query bypassing the ORM"},
 	{regexp.MustCompile(`System\.(out|err)\.`), "System.out logging instead of a logger"},
-	{regexp.MustCompile(`catch\s*\([^)]*\)\s*\{\s*\}`), "empty catch block swallowed exception"},
+	{regexp.MustCompile(`catch\s*\([^)]*\)\s*\{\s*\}|except[^:]*:\s*pass`), "empty catch/except swallowed exception"},
 	{regexp.MustCompile(`@Autowired`), "field injection instead of constructor injection"},
-	{regexp.MustCompile(`(?i)password|secret|api[_-]?key`), "hardcoded secret / credential handling"},
+	{regexp.MustCompile(`(?i)\bpassword\b|\bsecret\b|api[_-]?key|token\s*=`), "hardcoded secret / credential handling"},
+	{regexp.MustCompile(`==\s*null|!=\s*null|Optional\.get\(`), "null handling / Optional misuse"},
+	// TypeScript / React / webapp
+	{regexp.MustCompile(`console\.(log|error|warn)\(`), "console logging left in code"},
+	{regexp.MustCompile(`\bvar\s|\bany\b\s*[:=]|as\s+any\b`), "loose typing (var / any) in TypeScript"},
+	{regexp.MustCompile(`useEffect\(|useState\(`), "React hooks — effect/state dependency and setState pitfalls"},
+	{regexp.MustCompile(`process\.env\.`), "process.env access (Vite import.meta.env)"},
+	// Go
+	{regexp.MustCompile(`fmt\.Print|panic\(`), "fmt.Print / panic instead of error handling + logging"},
+	{regexp.MustCompile(`_\s*=\s*\w+|err\s*!=\s*nil`), "error handling — swallowed or unchecked errors"},
+	// Python
+	{regexp.MustCompile(`\bprint\(`), "print() instead of logging"},
 }
 
 // extractCodeSignals returns a focused query built from the code constructs
@@ -243,26 +256,41 @@ func Retrieve(args []string) int {
 		Families:  families,
 	}
 
+	// File advice may run a second focused query built from code signals — the
+	// raw-code query surfaces patterns/conventions, but specific anti-patterns
+	// need a focused query to rank (P3). The two are independent, so run them
+	// concurrently (Chroma queries dominate; the mini serialises only embeds).
+	// Clean files (no signals) keep the single-query path.
+	var sig string
+	if fileMode {
+		sig = extractCodeSignals(codeBody)
+	}
+
 	start := time.Now()
-	res, err := prompt.BuildContext(ctx, cfg)
+	var res, res2 *prompt.ContextResult
+	var err, err2 error
+	if sig != "" {
+		cfg2 := cfg
+		cfg2.Goal = sig
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); res, err = prompt.BuildContext(ctx, cfg) }()
+		go func() { defer wg.Done(); res2, err2 = prompt.BuildContext(ctx, cfg2) }()
+		wg.Wait()
+		if err == nil && err2 == nil {
+			res.Chunks = append(res.Chunks, res2.Chunks...)
+		} else if err == nil && err2 != nil && *verbose {
+			fmt.Fprintf(os.Stderr, "# signal query skipped: %v\n", err2)
+		}
+	} else {
+		res, err = prompt.BuildContext(ctx, cfg)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "olifant retrieve: %v\n(stack down? see [[olifant-stack]]: Tailscale + chromadb port-forward; fall back to reading the docs directly)\n", err)
 		return 1
 	}
 
 	if fileMode {
-		// Second, focused query built from code signals — the raw-code query
-		// surfaces patterns/conventions, but specific anti-patterns need a
-		// focused query to rank (P3). Only when signals are present, so clean
-		// files keep the single-query fast path.
-		if sig := extractCodeSignals(codeBody); sig != "" {
-			cfg.Goal = sig
-			if res2, err2 := prompt.BuildContext(ctx, cfg); err2 == nil {
-				res.Chunks = append(res.Chunks, res2.Chunks...)
-			} else if *verbose {
-				fmt.Fprintf(os.Stderr, "# signal query skipped: %v\n", err2)
-			}
-		}
 		res.Chunks = filterAdviceChunks(res.Chunks, *topN)
 		res.Sources = chunkSources(res.Chunks)
 	}
@@ -361,7 +389,7 @@ type adviceOutput struct {
 // bucket is best). Truncated to keep total (olifant#106, P3).
 func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.ContextChunk {
 	perBucket := keep/3 + 1
-	seen := map[string]bool{}
+	seenSource := map[string]bool{}
 	byBucket := map[string][]prompt.ContextChunk{}
 	for _, c := range chunks {
 		if adviceNoiseSource(c.Source) {
@@ -370,15 +398,17 @@ func filterAdviceChunks(chunks []prompt.ContextChunk, keep int) []prompt.Context
 		if !strings.HasSuffix(c.Scope, "/failure_modes") && !adviceRuleDocTypes[c.DocType] {
 			continue
 		}
-		key := c.Source + "\x00" + c.Body
-		if seen[key] {
+		// One chunk per source across the whole result — favour diverse rules
+		// over several sections of the same doc (input is distance-sorted, so
+		// the first-seen chunk of a source is its most relevant).
+		if seenSource[c.Source] {
 			continue
 		}
 		b := adviceBucket(c)
 		if len(byBucket[b]) >= perBucket {
 			continue
 		}
-		seen[key] = true
+		seenSource[c.Source] = true
 		byBucket[b] = append(byBucket[b], c)
 	}
 	out := make([]prompt.ContextChunk, 0, keep)

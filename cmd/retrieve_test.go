@@ -147,7 +147,11 @@ func TestExtractCodeSignals(t *testing.T) {
 		{"raw sql", `@Query("SELECT * FROM t")`, []string{"raw SQL"}},
 		{"field injection", "@Autowired private Repo repo;", []string{"field injection"}},
 		{"multiple", "for (X x : xs) { when(m.f(any())); }", []string{"any() matcher", "manual loop"}},
-		{"clean", "return tutors.stream().map(Tutor::name).toList();", nil},
+		{"ts console", "console.log('x'); const y: any = z;", []string{"console logging", "loose typing"}},
+		{"react hooks", "useEffect(() => setX(1), []);", []string{"React hooks"}},
+		{"go print/panic", "fmt.Println(x); if err != nil { panic(err) }", []string{"fmt.Print", "error handling"}},
+		{"python print", "print(value)", []string{"print()"}},
+		{"clean go", "return xs, nil", nil},
 	}
 	for _, c := range cases {
 		got := extractCodeSignals(c.code)
