@@ -27,22 +27,37 @@ type CaseDefaults struct {
 
 // Case is one evaluation row.
 type Case struct {
-	ID         string    `yaml:"id"`
-	Scope      []string  `yaml:"scope,omitempty"`
-	File       string    `yaml:"file,omitempty"`        // relative to platform root; passed as --file
-	Request    string    `yaml:"request,omitempty"`     // alternative to File: a literal request string
-	Claim      string    `yaml:"claim,omitempty"`       // validate surface (olifant#86): full claim text
-	Diff       string    `yaml:"diff,omitempty"`        // validate surface: frozen diff snapshot (self-contained, D-VC3)
-	TopN       int       `yaml:"top_n,omitempty"`       // overrides Default.TopN
-	MaxTokens  int       `yaml:"max_tokens,omitempty"`  // overrides Default.MaxTokens
-	TimeoutSec int       `yaml:"timeout_sec,omitempty"` // overrides Default.TimeoutSec
-	Synth      string    `yaml:"synth,omitempty"`       // overrides Default.Synth
-	Expected   *Expected `yaml:"expected,omitempty"`    // optional graded eval
+	ID          string          `yaml:"id"`
+	Scope       []string        `yaml:"scope,omitempty"`
+	File        string          `yaml:"file,omitempty"`         // relative to platform root; passed as --file
+	Request     string          `yaml:"request,omitempty"`      // alternative to File: a literal request string
+	Claim       string          `yaml:"claim,omitempty"`        // validate surface (olifant#86): full claim text
+	Diff        string          `yaml:"diff,omitempty"`         // validate surface: frozen diff snapshot (self-contained, D-VC3)
+	TopN        int             `yaml:"top_n,omitempty"`        // overrides Default.TopN
+	MaxTokens   int             `yaml:"max_tokens,omitempty"`   // overrides Default.MaxTokens
+	TimeoutSec  int             `yaml:"timeout_sec,omitempty"`  // overrides Default.TimeoutSec
+	Synth       string          `yaml:"synth,omitempty"`        // overrides Default.Synth
+	Expected    *Expected       `yaml:"expected,omitempty"`     // optional graded eval
+	FileContent string          `yaml:"file_content,omitempty"` // advice surface (#110): inline code snippet
+	Advice      *AdviceExpected `yaml:"advice,omitempty"`       // advice-quality expectations (per-bucket cites)
 }
 
 // IsValidate reports whether a case exercises the validate surface (claim +
 // frozen diff) rather than challenge (file/request). olifant#86.
 func (c Case) IsValidate() bool { return c.Claim != "" && c.Diff != "" }
+
+// IsAdvice reports whether a case exercises the T1 retrieval-advice surface
+// (inline code + per-bucket cite expectations) rather than a verdict surface.
+// Retrieval-only, measurement — never gates to blocking (D269). olifant#110.
+func (c Case) IsAdvice() bool { return c.FileContent != "" && c.Advice != nil }
+
+// AdviceExpected is the per-bucket cite contract for a retrieve --file case: the
+// cite ids that must surface in each avoid/prefer/convention bucket (#110).
+type AdviceExpected struct {
+	ExpectAvoid      []string `yaml:"expect_avoid,omitempty"`
+	ExpectPrefer     []string `yaml:"expect_prefer,omitempty"`
+	ExpectConvention []string `yaml:"expect_convention,omitempty"`
+}
 
 // Expected is the optional graded-eval contract for a case.
 type Expected struct {
@@ -73,6 +88,7 @@ type CaseResult struct {
 	OutputYAMLPath string         `yaml:"output_yaml_path"`
 	Error          string         `yaml:"error,omitempty"`
 	ExpectedMatch  *ExpectedMatch `yaml:"expected_match,omitempty"`
+	AdviceScore    *AdviceScore   `yaml:"advice_score,omitempty"` // advice surface (#110)
 	// FirstAttemptViolations is the validator's verdict on the first synth
 	// attempt, persisted so a regression gate (#16 EG-F3) can self-diagnose
 	// retry-masked regressions: a case with Attempts>1 + blocker entries
@@ -100,6 +116,22 @@ type ExpectedMatch struct {
 	MustCitePassed    bool   `yaml:"must_cite_passed,omitempty"`
 	MustNotCitePassed bool   `yaml:"must_not_cite_passed,omitempty"`
 	Notes             string `yaml:"notes,omitempty"`
+}
+
+// AdviceScore is a retrieve --file case's outcome: per-bucket cite hits/misses
+// and an overall pass (every expected cite surfaced in its bucket). olifant#110.
+type AdviceScore struct {
+	Avoid      BucketScore `yaml:"avoid,omitempty"`
+	Prefer     BucketScore `yaml:"prefer,omitempty"`
+	Convention BucketScore `yaml:"convention,omitempty"`
+	Passed     bool        `yaml:"passed"`
+}
+
+// BucketScore records which expected cites surfaced in one advice bucket.
+type BucketScore struct {
+	Expected []string `yaml:"expected,omitempty"`
+	Hit      []string `yaml:"hit,omitempty"`
+	Missed   []string `yaml:"missed,omitempty"`
 }
 
 // Report is the aggregate summary written at run completion.

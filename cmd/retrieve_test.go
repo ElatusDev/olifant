@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/ElatusDev/olifant/internal/ollama"
-	"github.com/ElatusDev/olifant/internal/prompt"
 )
 
 func TestInferScopes(t *testing.T) {
@@ -59,113 +58,6 @@ func TestRetrieveEconomy_SumsLocalKBSourcesOnly(t *testing.T) {
 	})
 	if got != 1000 {
 		t.Errorf("economy = %d, want 1000", got)
-	}
-}
-
-func TestAdviceBucket(t *testing.T) {
-	cases := []struct {
-		name string
-		c    prompt.ContextChunk
-		want string
-	}{
-		{"failure_modes family", prompt.ContextChunk{Scope: "backend/failure_modes"}, "avoid"},
-		{"anti_pattern doc_type", prompt.ContextChunk{Scope: "backend/corpus", DocType: "anti_pattern"}, "avoid"},
-		{"AP cite fallback", prompt.ContextChunk{Scope: "backend/corpus", DocType: "doc", Cites: []string{"AP184"}}, "avoid"},
-		{"pattern doc_type", prompt.ContextChunk{Scope: "backend/corpus", DocType: "pattern"}, "prefer"},
-		{"standard", prompt.ContextChunk{Scope: "backend/corpus", DocType: "standard"}, "convention"},
-		{"decision", prompt.ContextChunk{Scope: "universal/corpus", DocType: "decision", Cites: []string{"D259"}}, "convention"},
-		{"plain doc", prompt.ContextChunk{Scope: "backend/corpus", DocType: "doc"}, "convention"},
-	}
-	for _, c := range cases {
-		if got := adviceBucket(c.c); got != c.want {
-			t.Errorf("%s: adviceBucket = %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
-func TestGroupAdvice_BucketsAndRenders(t *testing.T) {
-	res := &prompt.ContextResult{Chunks: []prompt.ContextChunk{
-		{Source: "eval/failure-modes/v1.yaml#fm3", Scope: "backend/failure_modes", Body: "use streams not manual loops", Cites: []string{"AP20"}},
-		{Source: "patterns/backend.md", Scope: "backend/corpus", DocType: "pattern", Body: "Domain Object pattern"},
-		{Source: "standards/CODE-QUALITY.yaml", Scope: "universal/corpus", DocType: "standard", Body: "one sentence per public API"},
-	}}
-	g := groupAdvice("code advice: Foo.java", []string{"backend", "universal"}, res)
-	if len(g.Avoid) != 1 || len(g.Prefer) != 1 || len(g.Conventions) != 1 {
-		t.Fatalf("buckets avoid=%d prefer=%d conv=%d, want 1/1/1", len(g.Avoid), len(g.Prefer), len(g.Conventions))
-	}
-	md := renderAdviceMD("code advice: Foo.java", res)
-	for _, want := range []string{"⛔ Avoid", "✅ Prefer", "📐 Conventions", "Domain Object", "AP20"} {
-		if !strings.Contains(md, want) {
-			t.Errorf("renderAdviceMD missing %q\n%s", want, md)
-		}
-	}
-	// Empty result → explicit no-op line, never a crash.
-	if empty := renderAdviceMD("q", &prompt.ContextResult{}); !strings.Contains(empty, "No applicable rules") {
-		t.Errorf("empty render = %q", empty)
-	}
-}
-
-func TestFilterAdviceChunks(t *testing.T) {
-	chunks := []prompt.ContextChunk{
-		{Source: "standards/CODE-QUALITY-STANDARD.md", Scope: "universal/corpus", DocType: "standard"},   // keep
-		{Source: "workflows/core-api/x-workflow.md", Scope: "backend/corpus", DocType: "workflow"},       // drop (process)
-		{Source: "eval/failure-modes/v1.yaml#fm1", Scope: "backend/failure_modes"},                       // keep (family)
-		{Source: "claude-memory/projects/x/memory/MEMORY.md", Scope: "universal/corpus", DocType: "doc"}, // drop (noise source)
-		{Source: "for-you/README.md", Scope: "universal/corpus", DocType: "doc"},                         // drop (noise source)
-		{Source: "tech-encyclopedia/backend/java.md", Scope: "backend/corpus", DocType: "doc"},           // keep (guide)
-		{Source: "anti-patterns/catalog.yaml#AP4", Scope: "universal/corpus", DocType: "anti_pattern"},   // keep
-	}
-	got := filterAdviceChunks(chunks, 10)
-	want := map[string]bool{
-		"standards/CODE-QUALITY-STANDARD.md": true,
-		"eval/failure-modes/v1.yaml#fm1":     true,
-		"tech-encyclopedia/backend/java.md":  true,
-		"anti-patterns/catalog.yaml#AP4":     true,
-	}
-	if len(got) != len(want) {
-		t.Fatalf("kept %d chunks, want %d: %+v", len(got), len(want), got)
-	}
-	for _, c := range got {
-		if !want[c.Source] {
-			t.Errorf("kept unexpected source %q", c.Source)
-		}
-	}
-	// keep-limit truncates.
-	if trunc := filterAdviceChunks(chunks, 2); len(trunc) != 2 {
-		t.Errorf("truncate to 2: got %d", len(trunc))
-	}
-}
-
-func TestExtractCodeSignals(t *testing.T) {
-	cases := []struct {
-		name string
-		code string
-		want []string // substrings that must appear; empty = expect no signals
-	}{
-		{"any matcher", "when(repo.save(any())).thenReturn(x);", []string{"any() matcher"}},
-		{"for loop", "for (int i = 0; i < n; i++) {}", []string{"manual loop"}},
-		{"raw sql", `@Query("SELECT * FROM t")`, []string{"raw SQL"}},
-		{"field injection", "@Autowired private Repo repo;", []string{"field injection"}},
-		{"multiple", "for (X x : xs) { when(m.f(any())); }", []string{"any() matcher", "manual loop"}},
-		{"ts console", "console.log('x'); const y: any = z;", []string{"console logging", "loose typing"}},
-		{"react hooks", "useEffect(() => setX(1), []);", []string{"React hooks"}},
-		{"go print/panic", "fmt.Println(x); if err != nil { panic(err) }", []string{"fmt.Print", "error handling"}},
-		{"python print", "print(value)", []string{"print()"}},
-		{"clean go", "return xs, nil", nil},
-	}
-	for _, c := range cases {
-		got := extractCodeSignals(c.code)
-		if len(c.want) == 0 {
-			if got != "" {
-				t.Errorf("%s: expected no signals, got %q", c.name, got)
-			}
-			continue
-		}
-		for _, w := range c.want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: signals %q missing %q", c.name, got, w)
-			}
-		}
 	}
 }
 

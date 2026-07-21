@@ -144,6 +144,23 @@ func Run(ctx context.Context, cfg RunConfig) (*Report, error) {
 			continue
 		}
 
+		// Advice surface (#110): inline code + per-bucket cite expectations
+		// dispatches to the retrieval-only T1 pipeline (internal/advice) and is
+		// scored on cite coverage. Never contributes a BLOCKER (measurement, D269);
+		// a case is clean iff every expected cite surfaced in its bucket.
+		if c.IsAdvice() {
+			ares := runAdviceCase(ctx, c, caseDir, caseStart, rt, topN, timeoutSec)
+			if ares.Error == "" {
+				gradedTotal++
+				if ares.AdviceScore != nil && ares.AdviceScore.Passed {
+					gradedPass++
+					report.CleanCases++
+				}
+			}
+			report.Cases = append(report.Cases, ares)
+			continue
+		}
+
 		// Build request: either --file content or literal request
 		request, rerr := buildRequestForCase(c, cfg.PlatformRoot)
 		if rerr != nil {
