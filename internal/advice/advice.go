@@ -76,7 +76,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		Embedder:  cfg.Embedder,
 		Tenant:    cfg.Tenant,
 		Database:  cfg.Database,
-		Scopes:    cfg.Scopes,
+		Scopes:    withUniversal(cfg.Scopes),
 		TopN:      poolTopN,
 		MaxChars:  cfg.MaxChars,
 		Verbose:   cfg.Verbose,
@@ -125,6 +125,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	return out, nil
+}
+
+// withUniversal returns scopes with "universal" appended (where cross-cutting
+// rules live) unless already present or the input is empty (empty = all scopes,
+// which already includes universal). Idempotent; does not mutate the input.
+func withUniversal(scopes []string) []string {
+	if len(scopes) == 0 {
+		return scopes
+	}
+	for _, s := range scopes {
+		if s == "universal" {
+			return scopes
+		}
+	}
+	return append(append([]string(nil), scopes...), "universal")
 }
 
 // Cites returns the union of cite ids across all chunks in the given bucket
