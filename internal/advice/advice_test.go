@@ -154,7 +154,7 @@ func TestRun_BucketsAndCites_NoSynth(t *testing.T) {
 		t.Errorf("prefer source = %q", res.Prefer[0].Source)
 	}
 	// Cites accessor returns per-bucket cite union (none here, but must not panic).
-	if got := res.Cites("prefer"); got != nil && len(got) != 0 {
+	if got := res.Cites("prefer"); len(got) != 0 {
 		t.Errorf("cites(prefer) = %v, want empty", got)
 	}
 }
