@@ -31,11 +31,7 @@ func ResolveConfig(c Config) (Config, error) {
 	if c.KBRoot == "" {
 		return c, errors.New("--kb-root not specified and knowledge-base not found in ancestor dirs")
 	}
-	abs, err := filepath.Abs(c.KBRoot)
-	if err != nil {
-		return c, err
-	}
-	c.KBRoot = abs
+	c.KBRoot = NormalizeKBRoot(c.KBRoot)
 
 	if c.PlatformRoot == "" {
 		c.PlatformRoot = filepath.Dir(c.KBRoot)
@@ -59,7 +55,29 @@ func ResolveConfig(c Config) (Config, error) {
 			}
 		}
 	}
+	if c.MemoryRoot != "" {
+		// Same lstat trap as the KB root (olifant#114): a symlinked memory
+		// root walks as empty and sync would mass-remove the memory chunks.
+		c.MemoryRoot = NormalizeKBRoot(c.MemoryRoot)
+	}
 	return c, nil
+}
+
+// NormalizeKBRoot returns path absolute with symlinks resolved. The KB root
+// is commonly reached through the platform's `knowledge-base` symlink, and
+// filepath.WalkDir lstats its root — a symlinked root walks as a single
+// non-dir entry, silently yielding zero KB sources (olifant#114). Errors
+// degrade to the best available form of the path (absolute, else as given)
+// so existing "kb-root not found" handling downstream stays intact.
+func NormalizeKBRoot(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 func findUp(suffix string) (string, bool) {
@@ -355,6 +373,8 @@ func shouldSkipDir(name string) bool {
 	case ".git", "node_modules", "target", "dist", "build", ".idea", ".vscode":
 		return true
 	case "v1": // corpus output dir — never re-index ourselves
+		return true
+	case ".worktrees": // embedded per-issue KB worktrees — never corpus sources (olifant#114)
 		return true
 	case "short-term": // ledger + eval-run model output — never truth (D-BK9, D-DG1)
 		return true
