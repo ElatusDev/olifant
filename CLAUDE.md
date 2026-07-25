@@ -13,12 +13,13 @@ inside the `platform/` tree and is meant to be run from there.
 
 **Path note:** specs and code comments say `platform/knowledge-base/`, and
 the real directory on disk is `platform-knowledge-base/`. A
-`knowledge-base` → `platform-knowledge-base` symlink now exists at the
-platform root, so the corpus builder's autodetect
-(`findUp("knowledge-base/README.md")`) resolves to `<platform>/knowledge-base`
-and reads through the symlink correctly — no flag needed. To pin the real
-directory instead, pass `--kb-root ../platform-knowledge-base` explicitly to
-`corpus`/`repo` commands.
+`knowledge-base` → `platform-knowledge-base` symlink exists at the platform
+root; kb-root resolution (autodetect, `-kb-root`, or `OLIFANT_KB_ROOT`)
+resolves symlinks before walking (`corpus.NormalizeKBRoot`, olifant#114 —
+`filepath.WalkDir` does not descend a symlinked root, which previously made
+the KB walk silently empty and let `corpus sync` mass-delete the index).
+`corpus sync` additionally refuses a walk that finds zero KB sources. To pin
+a specific tree, pass `--kb-root ../platform-knowledge-base` explicitly.
 
 ## Commands
 

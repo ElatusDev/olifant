@@ -98,6 +98,19 @@ func DiffManifests(old, new Manifest) ManifestDiff {
 	return d
 }
 
+// countKBSources counts manifest sources produced by the KB walk itself —
+// everything except the repo-CLAUDE.md and memory loops' entries (the only
+// producers of the claude_md / memory doc types).
+func countKBSources(m Manifest) int {
+	n := 0
+	for _, s := range m.Sources {
+		if s.DocType != "claude_md" && s.DocType != "memory" {
+			n++
+		}
+	}
+	return n
+}
+
 // Sync performs one incremental re-index against the target tree's
 // previously-landed manifest.
 func Sync(ctx context.Context, cfg SyncConfig) (*SyncReport, error) {
@@ -118,6 +131,15 @@ func Sync(ctx context.Context, cfg SyncConfig) (*SyncReport, error) {
 	// not source-diffable. Refuse loudly to the recovery path.
 	if old.BuilderVersion != fresh.BuilderVersion {
 		return nil, fmt.Errorf("sync: builder version drift (%s indexed vs %s current) — a source diff cannot express a chunking change; run the full drop-and-rebuild (AP179 recipe)", old.BuilderVersion, fresh.BuilderVersion)
+	}
+
+	// olifant#114: a degenerate walk (wrong or formerly-symlinked kb-root —
+	// filepath.WalkDir does not descend a symlinked root) yields zero KB
+	// sources, which a plain diff would apply as mass removal of the entire
+	// indexed KB. A KB tree with no indexable sources is never a legitimate
+	// sync input — refuse loudly instead of deleting.
+	if countKBSources(fresh) == 0 {
+		return nil, fmt.Errorf("sync: walk of %s found no KB sources — wrong kb-root? refusing to apply it as a mass removal (pass the real KB directory via -kb-root)", cfg.KBRoot)
 	}
 
 	diff := DiffManifests(old, fresh)

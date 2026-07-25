@@ -121,6 +121,30 @@ func TestSync_VersionGuardRefuses(t *testing.T) {
 	}
 }
 
+func TestSync_RefusesDegenerateWalk(t *testing.T) {
+	cfg := syncFixture(t)
+	landCurrentManifest(t, cfg)
+	before, _ := os.ReadFile(filepath.Join(cfg.OutDir, "manifest.yaml"))
+
+	// Repoint the walk at an existing dir with no indexable KB sources — the
+	// shape a symlinked/wrong kb-root used to produce (olifant#114). The
+	// landed manifest (1 KB source) stays where it is.
+	empty := filepath.Join(cfg.PlatformRoot, "empty-kb")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.KBRoot = empty
+
+	_, err := Sync(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "no KB sources") {
+		t.Fatalf("zero-KB-source walk must refuse, not mass-remove; got %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(cfg.OutDir, "manifest.yaml"))
+	if string(before) != string(after) {
+		t.Error("refused sync must not touch the landed manifest")
+	}
+}
+
 func TestSync_MissingManifestRefuses(t *testing.T) {
 	cfg := syncFixture(t)
 	_, err := Sync(context.Background(), cfg)
