@@ -46,9 +46,12 @@ func TestCorpusIndexV2_Integration(t *testing.T) {
 		t.Errorf("corpusIndexV2 = %d, want 0", code)
 	}
 
-	// Symlinked kb-root pin (olifant#116): the root is normalized via
-	// corpus.NormalizeKBRoot, so a symlinked -kb-root indexes identically —
-	// the AP267 blind spot must never reach the v2 walker.
+	// Symlinked kb-root parity (olifant#116): a symlinked -kb-root indexes
+	// identically. NOTE: this is behavior parity, not an AP267 regression
+	// pin — the v2 walker never walks the root itself (it joins
+	// corpus/v2-curriculum subpaths, where a symlink is an ancestor
+	// component lstat follows), so this test passes with or without root
+	// normalization; the NormalizeKBRoot switch is consistency with v1.
 	link := filepath.Join(t.TempDir(), "kb-link")
 	if err := os.Symlink(kb, link); err != nil {
 		t.Fatal(err)
