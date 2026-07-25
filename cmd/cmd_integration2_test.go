@@ -45,6 +45,17 @@ func TestCorpusIndexV2_Integration(t *testing.T) {
 	if code := corpusIndexV2([]string{"-kb-root", kb}); code != 0 {
 		t.Errorf("corpusIndexV2 = %d, want 0", code)
 	}
+
+	// Symlinked kb-root pin (olifant#116): the root is normalized via
+	// corpus.NormalizeKBRoot, so a symlinked -kb-root indexes identically —
+	// the AP267 blind spot must never reach the v2 walker.
+	link := filepath.Join(t.TempDir(), "kb-link")
+	if err := os.Symlink(kb, link); err != nil {
+		t.Fatal(err)
+	}
+	if code := corpusIndexV2([]string{"-kb-root", link}); code != 0 {
+		t.Errorf("corpusIndexV2(symlinked root) = %d, want 0", code)
+	}
 }
 
 func TestRepoIngest_Integration(t *testing.T) {

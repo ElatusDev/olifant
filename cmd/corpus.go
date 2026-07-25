@@ -711,7 +711,7 @@ func corpusIndexV2(args []string) int {
 			return 1
 		}
 	}
-	root, _ = filepath.Abs(root)
+	root = corpus.NormalizeKBRoot(root)
 
 	var only []string
 	if *onlyKinds != "" {
