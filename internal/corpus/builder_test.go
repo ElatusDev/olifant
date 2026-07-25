@@ -70,6 +70,39 @@ func TestResolveConfig_SymlinkedRootWalksKB(t *testing.T) {
 	}
 }
 
+func TestResolveConfig_SymlinkedMemoryRootWalks(t *testing.T) {
+	root := t.TempDir()
+	kb := filepath.Join(root, "kb")
+	writeFile(t, filepath.Join(kb, "patterns", "backend.md"), "# P\n\nbody\n")
+	realMem := filepath.Join(root, "real-memory")
+	writeFile(t, filepath.Join(realMem, "note.md"), "# Note\n\nremember\n")
+	memLink := filepath.Join(root, "memory-link")
+	if err := os.Symlink(realMem, memLink); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ResolveConfig(Config{
+		KBRoot: kb, PlatformRoot: root,
+		OutDir: filepath.Join(root, "out"), MemoryRoot: memLink,
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfig: %v", err)
+	}
+	_, m, err := buildCorpus(cfg)
+	if err != nil {
+		t.Fatalf("buildCorpus: %v", err)
+	}
+	found := false
+	for _, s := range m.Sources {
+		if s.Path == "memory/note.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("symlinked memory-root must walk the real tree (olifant#114); sources = %+v", m.Sources)
+	}
+}
+
 func TestBuildCorpus_SkipsWorktreesKeepsClaude(t *testing.T) {
 	root := t.TempDir()
 	kb := filepath.Join(root, "kb")

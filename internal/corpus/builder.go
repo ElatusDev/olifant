@@ -55,6 +55,11 @@ func ResolveConfig(c Config) (Config, error) {
 			}
 		}
 	}
+	if c.MemoryRoot != "" {
+		// Same lstat trap as the KB root (olifant#114): a symlinked memory
+		// root walks as empty and sync would mass-remove the memory chunks.
+		c.MemoryRoot = NormalizeKBRoot(c.MemoryRoot)
+	}
 	return c, nil
 }
 
