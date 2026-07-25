@@ -111,6 +111,18 @@ func countKBSources(m Manifest) int {
 	return n
 }
 
+// countMemorySources counts manifest sources produced by the memory walk —
+// the only producer of the memory doc type.
+func countMemorySources(m Manifest) int {
+	n := 0
+	for _, s := range m.Sources {
+		if s.DocType == "memory" {
+			n++
+		}
+	}
+	return n
+}
+
 // Sync performs one incremental re-index against the target tree's
 // previously-landed manifest.
 func Sync(ctx context.Context, cfg SyncConfig) (*SyncReport, error) {
@@ -140,6 +152,15 @@ func Sync(ctx context.Context, cfg SyncConfig) (*SyncReport, error) {
 	// sync input — refuse loudly instead of deleting.
 	if countKBSources(fresh) == 0 {
 		return nil, fmt.Errorf("sync: walk of %s found no KB sources — wrong kb-root? refusing to apply it as a mass removal (pass the real KB directory via -kb-root)", cfg.KBRoot)
+	}
+
+	// olifant#116: same class for the memory walk — a wrong-but-existing
+	// (empty) memory root, or a machine without the memory dir at all,
+	// yields zero memory sources and would delete every landed memory
+	// chunk. Conditional on the landed manifest: trees genuinely built
+	// without memory stay syncable.
+	if countMemorySources(fresh) == 0 && countMemorySources(old) >= 1 {
+		return nil, fmt.Errorf("sync: memory walk found no sources (memory-root %q) while the landed manifest has %d — refusing to apply it as a memory wipe; fix -memory-root, or rebuild fully (AP179 recipe) to drop memory intentionally", cfg.MemoryRoot, countMemorySources(old))
 	}
 
 	diff := DiffManifests(old, fresh)

@@ -18,8 +18,9 @@ root; kb-root resolution (autodetect, `-kb-root`, or `OLIFANT_KB_ROOT`)
 resolves symlinks before walking (`corpus.NormalizeKBRoot`, olifant#114 —
 `filepath.WalkDir` does not descend a symlinked root, which previously made
 the KB walk silently empty and let `corpus sync` mass-delete the index).
-`corpus sync` additionally refuses a walk that finds zero KB sources. To pin
-a specific tree, pass `--kb-root ../platform-knowledge-base` explicitly.
+`corpus sync` additionally refuses a walk that finds zero KB sources, and a
+zero-memory walk over a manifest with landed memory sources (olifant#116).
+To pin a specific tree, pass `--kb-root ../platform-knowledge-base` explicitly.
 
 ## Commands
 

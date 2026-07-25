@@ -145,6 +145,38 @@ func TestSync_RefusesDegenerateWalk(t *testing.T) {
 	}
 }
 
+func TestSync_RefusesMemoryWipe(t *testing.T) {
+	cfg := syncFixture(t)
+	// Land a manifest carrying a memory source alongside the KB source.
+	mem := filepath.Join(cfg.PlatformRoot, "memory")
+	if err := os.MkdirAll(mem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mem, "note.md"), []byte("# N\n\nremember\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg.MemoryRoot = mem
+	landCurrentManifest(t, cfg)
+	before, _ := os.ReadFile(filepath.Join(cfg.OutDir, "manifest.yaml"))
+
+	// The #116 shape: memory root exists but is empty (or the machine lacks
+	// it entirely) — the KB walk is fine, the memory walk comes back empty.
+	empty := filepath.Join(cfg.PlatformRoot, "empty-memory")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.MemoryRoot = empty
+
+	_, err := Sync(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "memory wipe") {
+		t.Fatalf("zero-memory walk over a landed memory manifest must refuse; got %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(cfg.OutDir, "manifest.yaml"))
+	if string(before) != string(after) {
+		t.Error("refused sync must not touch the landed manifest")
+	}
+}
+
 func TestSync_MissingManifestRefuses(t *testing.T) {
 	cfg := syncFixture(t)
 	_, err := Sync(context.Background(), cfg)
