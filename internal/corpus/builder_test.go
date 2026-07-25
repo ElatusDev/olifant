@@ -17,6 +17,59 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestNormalizeKBRoot_ResolvesSymlink(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "platform-knowledge-base")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "knowledge-base")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	// TempDir itself may sit behind a symlink (macOS /var → /private/var), so
+	// compare against the fully resolved real path.
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NormalizeKBRoot(link); got != want {
+		t.Errorf("NormalizeKBRoot(%s) = %s, want %s", link, got, want)
+	}
+	// A nonexistent path degrades to the absolute path — downstream
+	// "kb-root not found" handling reports it, not this helper.
+	missing := filepath.Join(root, "nope")
+	if got := NormalizeKBRoot(missing); got != missing {
+		t.Errorf("NormalizeKBRoot(missing) = %s, want %s", got, missing)
+	}
+}
+
+func TestResolveConfig_SymlinkedRootWalksKB(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "platform-knowledge-base")
+	writeFile(t, filepath.Join(real, "patterns", "backend.md"), "# P\n\n## X\n\nbody\n")
+	link := filepath.Join(root, "knowledge-base")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ResolveConfig(Config{
+		KBRoot: link, PlatformRoot: root,
+		OutDir: filepath.Join(root, "out"), MemoryRoot: filepath.Join(root, "no-memory"),
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfig: %v", err)
+	}
+	_, m, err := buildCorpus(cfg)
+	if err != nil {
+		t.Fatalf("buildCorpus: %v", err)
+	}
+	if len(m.Sources) != 1 || m.Sources[0].Path != "patterns/backend.md" {
+		t.Errorf("symlinked kb-root must walk the real tree (olifant#114); sources = %+v", m.Sources)
+	}
+}
+
 func TestBuild_EndToEnd(t *testing.T) {
 	root := t.TempDir()
 	kb := filepath.Join(root, "knowledge-base")

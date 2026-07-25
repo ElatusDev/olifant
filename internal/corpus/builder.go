@@ -31,11 +31,7 @@ func ResolveConfig(c Config) (Config, error) {
 	if c.KBRoot == "" {
 		return c, errors.New("--kb-root not specified and knowledge-base not found in ancestor dirs")
 	}
-	abs, err := filepath.Abs(c.KBRoot)
-	if err != nil {
-		return c, err
-	}
-	c.KBRoot = abs
+	c.KBRoot = NormalizeKBRoot(c.KBRoot)
 
 	if c.PlatformRoot == "" {
 		c.PlatformRoot = filepath.Dir(c.KBRoot)
@@ -60,6 +56,23 @@ func ResolveConfig(c Config) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// NormalizeKBRoot returns path absolute with symlinks resolved. The KB root
+// is commonly reached through the platform's `knowledge-base` symlink, and
+// filepath.WalkDir lstats its root — a symlinked root walks as a single
+// non-dir entry, silently yielding zero KB sources (olifant#114). Errors
+// degrade to the best available form of the path (absolute, else as given)
+// so existing "kb-root not found" handling downstream stays intact.
+func NormalizeKBRoot(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 func findUp(suffix string) (string, bool) {

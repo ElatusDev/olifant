@@ -828,7 +828,7 @@ func corpusIndex(args []string) int {
 			return 1
 		}
 	}
-	root, _ = filepath.Abs(root)
+	root = corpus.NormalizeKBRoot(root)
 	cd := *corpusDir
 	if cd == "" {
 		cd = filepath.Join(root, "corpus", "v1")
