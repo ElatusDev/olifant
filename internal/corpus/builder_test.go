@@ -70,6 +70,32 @@ func TestResolveConfig_SymlinkedRootWalksKB(t *testing.T) {
 	}
 }
 
+func TestBuildCorpus_SkipsWorktreesKeepsClaude(t *testing.T) {
+	root := t.TempDir()
+	kb := filepath.Join(root, "kb")
+	// .worktrees holds embedded per-issue KB checkouts — never sources.
+	writeFile(t, filepath.Join(kb, ".worktrees", "kb-999", "patterns", "junk.md"), "# stale branch copy\n")
+	// .claude/skills are tracked skill sources and MUST stay indexed (D-2).
+	writeFile(t, filepath.Join(kb, ".claude", "skills", "x", "SKILL.md"), "# Skill X\n\n## Use\n\nbody\n")
+
+	cfg := Config{KBRoot: kb, PlatformRoot: root, OutDir: filepath.Join(root, "out")}
+	_, m, err := buildCorpus(cfg)
+	if err != nil {
+		t.Fatalf("buildCorpus: %v", err)
+	}
+	var paths []string
+	for _, s := range m.Sources {
+		paths = append(paths, s.Path)
+	}
+	got := strings.Join(paths, ",")
+	if strings.Contains(got, ".worktrees") {
+		t.Errorf(".worktrees content must be skipped (olifant#114); sources = %s", got)
+	}
+	if !strings.Contains(got, ".claude/skills/x/SKILL.md") {
+		t.Errorf(".claude skill sources must stay indexed; sources = %s", got)
+	}
+}
+
 func TestBuild_EndToEnd(t *testing.T) {
 	root := t.TempDir()
 	kb := filepath.Join(root, "knowledge-base")

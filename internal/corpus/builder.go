@@ -369,6 +369,8 @@ func shouldSkipDir(name string) bool {
 		return true
 	case "v1": // corpus output dir — never re-index ourselves
 		return true
+	case ".worktrees": // embedded per-issue KB worktrees — never corpus sources (olifant#114)
+		return true
 	case "short-term": // ledger + eval-run model output — never truth (D-BK9, D-DG1)
 		return true
 	}
