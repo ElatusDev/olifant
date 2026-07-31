@@ -30,14 +30,14 @@ github.com/ElatusDev/olifant/internal/dictionary	92
 github.com/ElatusDev/olifant/internal/embedder	85
 github.com/ElatusDev/olifant/internal/eval	91
 github.com/ElatusDev/olifant/internal/kbtree	90
-github.com/ElatusDev/olifant/internal/ollama	95
+github.com/ElatusDev/olifant/internal/ollama	96
 github.com/ElatusDev/olifant/internal/promotion	87
 github.com/ElatusDev/olifant/internal/prompt	88
-github.com/ElatusDev/olifant/internal/psp	85
+github.com/ElatusDev/olifant/internal/psp	88
 github.com/ElatusDev/olifant/internal/repos	87
 github.com/ElatusDev/olifant/internal/retrieval	94
 github.com/ElatusDev/olifant/internal/shortterm	90
 github.com/ElatusDev/olifant/internal/synth	96
 github.com/ElatusDev/olifant/internal/validate	86
 github.com/ElatusDev/olifant/internal/advice	85
-github.com/ElatusDev/olifant/internal/respcache	78
+github.com/ElatusDev/olifant/internal/respcache	80

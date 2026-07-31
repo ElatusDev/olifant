@@ -15,38 +15,100 @@ import (
 // AC3 structural pin (workflow IA5/D-4): the eval-gate lane must not be able
 // to reach the response cache. The gate runs challenge.Run / validate.Run
 // over synthlib directly — NOT through the PSP executor seam — so the bypass
-// is absence of wiring. This import scan keeps that true: the day one of
-// these packages imports respcache (or the psp seam that wraps it), the
-// bypass claim is void and this test forces the discussion.
+// is absence of wiring. Two invariants enforce that:
+//
+//  1. The lane packages and the gate's cmd entrypoints (`cmd/eval*.go`)
+//     never DIRECTLY import respcache or psp. (Type-level transitive
+//     reachability — eval→advice→prompt→psp for Plan types — is legitimate;
+//     the cache only engages where a CacheExecutor is constructed.)
+//  2. `NewCacheExecutor` is constructed in exactly the known wiring sites —
+//     today only `cmd/run.go`. A new wiring site (e.g. someone routing the
+//     gate through cached executors in `cmd/eval.go`) trips this test and
+//     forces the bypass discussion.
 func TestEvalLaneNeverImportsResponseCache(t *testing.T) {
+	const modPrefix = "github.com/ElatusDev/olifant/"
 	banned := map[string]string{
-		"github.com/ElatusDev/olifant/internal/respcache": "the response cache itself",
-		"github.com/ElatusDev/olifant/internal/psp":       "the executor seam the cache wraps",
+		modPrefix + "internal/respcache": "the response cache itself",
+		modPrefix + "internal/psp":       "the executor seam the cache wraps",
 	}
+	repoRoot := filepath.Join("..", "..")
+	fset := token.NewFileSet()
+
+	var files []string
 	for _, lane := range []string{"eval", "challenge", "validate", "synth"} {
-		dir := filepath.Join("..", lane)
+		dir := filepath.Join(repoRoot, "internal", lane)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("read %s: %v", dir, err)
 		}
-		fset := token.NewFileSet()
 		for _, de := range entries {
-			name := de.Name()
-			if de.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			fname := filepath.Join(dir, name)
-			f, perr := parser.ParseFile(fset, fname, nil, parser.ImportsOnly)
-			if perr != nil {
-				t.Fatalf("parse %s: %v", fname, perr)
-			}
-			for _, imp := range f.Imports {
-				path := strings.Trim(imp.Path.Value, `"`)
-				if why, bad := banned[path]; bad {
-					t.Errorf("%s imports %s (%s) — eval-gate bypass-by-construction broken (AC3)", fname, path, why)
-				}
+			if !de.IsDir() && strings.HasSuffix(de.Name(), ".go") && !strings.HasSuffix(de.Name(), "_test.go") {
+				files = append(files, filepath.Join(dir, de.Name()))
 			}
 		}
+	}
+	evalCmds, _ := filepath.Glob(filepath.Join(repoRoot, "cmd", "eval*.go"))
+	if len(evalCmds) == 0 {
+		t.Fatal("no cmd/eval*.go entrypoints found — scan roots are stale")
+	}
+	for _, f := range evalCmds {
+		if !strings.HasSuffix(f, "_test.go") {
+			files = append(files, f)
+		}
+	}
+	for _, fname := range files {
+		f, perr := parser.ParseFile(fset, fname, nil, parser.ImportsOnly)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", fname, perr)
+		}
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if why, bad := banned[p]; bad {
+				t.Errorf("%s imports %s (%s) — eval-gate bypass-by-construction broken (AC3)", fname, p, why)
+			}
+		}
+	}
+}
+
+// Invariant 2: the cache wrapper is constructed ONLY at the known wiring
+// sites. Scans every non-test .go file in the repo for `NewCacheExecutor(`.
+func TestCacheExecutorWiredOnlyAtKnownSites(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	allowed := map[string]bool{
+		filepath.Join("cmd", "run.go"):                        true, // the PSP runner CLI — the one cached lane
+		filepath.Join("internal", "psp", "cache_executor.go"): true, // the definition itself
+	}
+	err := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); name == ".git" || name == "bin" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		raw, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		if !strings.Contains(string(raw), "NewCacheExecutor(") {
+			return nil
+		}
+		rel, rerr := filepath.Rel(repoRoot, path)
+		if rerr != nil {
+			return rerr
+		}
+		if !allowed[rel] {
+			t.Errorf("%s constructs a CacheExecutor — new wiring site outside the allowlist; if intentional (NOT the eval-gate lane, D-4), extend the allowlist with a comment", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
 	}
 }
 

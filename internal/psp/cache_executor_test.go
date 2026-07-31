@@ -180,6 +180,65 @@ func mustExecute(t *testing.T, e Executor, ctx context.Context, prompt string, s
 	return resp
 }
 
+// The load-bearing runner interplay (review finding prr:nak-cache): a
+// response that fails step validation is NAKed by the runner — it must be
+// invalidated, or every future run of the plan replays the cached failure
+// deterministically and burns its retry budget with zero live model calls.
+func TestRun_NAKedResponseInvalidatedNotReplayed(t *testing.T) {
+	store := testCacheStore(t)
+	// Output nil against a schema-carrying step ⇒ blocker ⇒ NAK.
+	failing := &countingExecutor{resp: Response{RawText: "unparseable"}}
+	failing.resp.Output = nil
+	wrapped := NewCacheExecutor(failing, store, false)
+
+	step := minimalStep("step_01", "")
+	step.RetryPolicy = RetryPolicy{MaxAttempts: 1}
+	plan := minimalPlan([]Step{step})
+	cfg := RunnerConfig{Executor: wrapped, Executors: map[string]Executor{ExecutorKindLocal: wrapped}, Plan: plan}
+
+	res1, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run 1: unexpected hard error: %v", err)
+	}
+	if res1.State != StateClosedError {
+		t.Fatalf("run 1 state = %v, want ClosedError (terminal NAK)", res1.State)
+	}
+	if failing.calls != 1 {
+		t.Fatalf("run 1 live calls = %d, want 1", failing.calls)
+	}
+	res2, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run 2: unexpected hard error: %v", err)
+	}
+	if res2.State != StateClosedError {
+		t.Fatalf("run 2 state = %v, want ClosedError", res2.State)
+	}
+	if failing.calls != 2 {
+		t.Errorf("run 2 live calls = %d total, want 2 — NAKed response was served from cache (retry budget burns on replayed failures)", failing.calls)
+	}
+}
+
+func TestCacheExecutor_InvalidateDropsEntry(t *testing.T) {
+	store := testCacheStore(t)
+	inner := &countingExecutor{resp: Response{RawText: "v", Output: StepOutput{"ok": true}}}
+	ce := NewCacheExecutor(inner, store, false).(*CacheExecutor)
+	ctx := context.Background()
+
+	mustExecute(t, ce, ctx, "prompt-inv", nil)
+	ce.Invalidate("prompt-inv", nil)
+	mustExecute(t, ce, ctx, "prompt-inv", nil)
+	if inner.calls != 2 {
+		t.Errorf("inner calls = %d, want 2 — Invalidate must drop the stored entry", inner.calls)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.Root(), "log.ndjson"))
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if !strings.Contains(string(raw), `"event":"invalidate"`) {
+		t.Errorf("ledger missing invalidate event: %s", raw)
+	}
+}
+
 // Guard against payload-format drift: a stored entry whose payload no longer
 // decodes as a Response must fall through to the live backend, not error.
 func TestCacheExecutor_UndecodablePayloadFallsThrough(t *testing.T) {
@@ -195,5 +254,12 @@ func TestCacheExecutor_UndecodablePayloadFallsThrough(t *testing.T) {
 	got := mustExecute(t, ce, context.Background(), "prompt-drift", nil)
 	if inner.calls != 1 || got.RawText != "live" {
 		t.Errorf("calls=%d raw=%q — undecodable payload must fall through to live call", inner.calls, got.RawText)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.Root(), "log.ndjson"))
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if !strings.Contains(string(raw), `"event":"drift"`) {
+		t.Errorf("fallthrough not ledgered as drift — S2 hit-rate would overcount: %s", raw)
 	}
 }

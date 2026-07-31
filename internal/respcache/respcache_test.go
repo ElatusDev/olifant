@@ -246,6 +246,38 @@ func TestStore_ConcurrentSameKeyPutIdempotent(t *testing.T) {
 	}
 }
 
+func TestStore_DeleteRemovesAndLedgersOnlyRealEntries(t *testing.T) {
+	s := testStore(t)
+	k := baseKey()
+	s.Delete(k) // absent — must NOT ledger a phantom invalidation
+	if err := s.Put(k, Entry{Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	s.Delete(k)
+	if _, ok := s.Get(k); ok {
+		t.Fatal("Get after Delete: hit, want miss")
+	}
+	raw, err := os.ReadFile(filepath.Join(s.Root(), "log.ndjson"))
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if got := strings.Count(string(raw), `"event":"invalidate"`); got != 1 {
+		t.Errorf("invalidate events = %d, want exactly 1 (no phantom for the absent-key Delete)", got)
+	}
+}
+
+func TestStore_RecordDriftAppends(t *testing.T) {
+	s := testStore(t)
+	s.RecordDrift(baseKey())
+	raw, err := os.ReadFile(filepath.Join(s.Root(), "log.ndjson"))
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if !strings.Contains(string(raw), `"event":"drift"`) {
+		t.Errorf("drift event not ledgered: %s", raw)
+	}
+}
+
 func TestStore_CorruptObjectTreatedAsMiss(t *testing.T) {
 	s := testStore(t)
 	k := baseKey()

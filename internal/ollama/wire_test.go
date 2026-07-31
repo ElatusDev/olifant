@@ -27,6 +27,37 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestModelDigest(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" || r.Method != http.MethodGet {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"models":[
+			{"name":"other:7b","model":"other:7b","digest":"sha-other"},
+			{"name":"qwen3:8b","model":"qwen3:8b","digest":"sha-qwen"},
+			{"name":"bare:latest","model":"bare:latest","digest":"sha-bare"}]}`)
+	})
+	ctx := context.Background()
+	if d, err := c.ModelDigest(ctx, "qwen3:8b"); err != nil || d != "sha-qwen" {
+		t.Errorf("ModelDigest(qwen3:8b) = %q, %v; want sha-qwen", d, err)
+	}
+	// A bare tag matches its `:latest` entry.
+	if d, err := c.ModelDigest(ctx, "bare"); err != nil || d != "sha-bare" {
+		t.Errorf("ModelDigest(bare) = %q, %v; want sha-bare", d, err)
+	}
+	// Unknown model: empty digest, no error — callers degrade to tag-only keying.
+	if d, err := c.ModelDigest(ctx, "absent:1b"); err != nil || d != "" {
+		t.Errorf("ModelDigest(absent) = %q, %v; want empty + nil", d, err)
+	}
+}
+
+func TestModelDigest_EndpointDown(t *testing.T) {
+	c := New("http://127.0.0.1:1")
+	if _, err := c.ModelDigest(context.Background(), "qwen3:8b"); err == nil {
+		t.Error("unreachable endpoint should return an error")
+	}
+}
+
 func TestVersion(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/version" || r.Method != http.MethodGet {
