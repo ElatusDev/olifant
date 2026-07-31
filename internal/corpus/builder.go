@@ -378,6 +378,8 @@ func shouldSkipDir(name string) bool {
 		return true
 	case "short-term": // ledger + eval-run model output — never truth (D-BK9, D-DG1)
 		return true
+	case ".olifant": // response/digest cache root — model output, never truth (epic #119 S1, AP184)
+		return true
 	}
 	return false
 }
