@@ -200,3 +200,33 @@ func TestPrune_TempReapGuardsFreshWrites(t *testing.T) {
 		t.Error("fresh tmp removed — in-flight write unprotected")
 	}
 }
+
+func TestPrune_DryRunWordsFutureTense(t *testing.T) {
+	// The count parity is tested above; this pins that a dry run reaps no
+	// temp files either (the CLI's "would reap" claim).
+	s := testStore(t)
+	seedStore(t, s, 1)
+	shardParent := filepath.Join(s.Root(), "objects")
+	shards, err := os.ReadDir(shardParent)
+	if err != nil || len(shards) == 0 {
+		t.Fatalf("no shards: %v", err)
+	}
+	tmp := filepath.Join(shardParent, shards[0].Name(), ".tmp-dry-1")
+	if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(tmp, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Prune(PruneOptions{All: true, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TempReaped != 1 {
+		t.Errorf("dry-run TempReaped = %d, want 1 (reported)", res.TempReaped)
+	}
+	if _, err := os.Stat(tmp); err != nil {
+		t.Error("dry-run removed the temp file")
+	}
+}

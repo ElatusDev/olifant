@@ -147,3 +147,9 @@ func TestHumanBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBytes_OverflowRejected(t *testing.T) {
+	if _, err := parseBytes("9999999999GB"); err == nil {
+		t.Error("overflowing size should error, not wrap")
+	}
+}
