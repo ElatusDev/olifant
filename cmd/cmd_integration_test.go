@@ -23,6 +23,10 @@ func fakeStack(t *testing.T, genJSON string) {
 	// silently served from it on re-runs — skipping the fake wire servers
 	// below and masking regressions (found via `cache status`, #121).
 	t.Setenv(respcache.EnvDir, t.TempDir())
+	// New env seams from #123 registered per AP290 — pin the developer's
+	// shell out of the hermetic environment.
+	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "")
+	t.Setenv("OLIFANT_CLAUDE_CACHE_1H", "false")
 	oll := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/version":

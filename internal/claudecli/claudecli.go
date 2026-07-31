@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -38,6 +39,10 @@ type Args struct {
 type Options struct {
 	WorkDir string
 	Timeout time.Duration
+	// Cache1H sets ENABLE_PROMPT_CACHING_1H on the subprocess env,
+	// extending the subscription lane's ephemeral cache TTL to 1h
+	// (epic #119 S4). Additive to the inherited environment.
+	Cache1H bool
 }
 
 // Usage mirrors the CLI's usage block. It is the superset of what both
@@ -127,6 +132,11 @@ func Run(ctx context.Context, binary string, a Args, opts Options) (Result, erro
 	cmd := exec.CommandContext(ctx, binary, args...)
 	if opts.WorkDir != "" {
 		cmd.Dir = opts.WorkDir
+	}
+	if opts.Cache1H {
+		// Append, never replace: the CLI needs the parent env (keychain
+		// auth, PATH). Exactly one variable is added (workflow D-4).
+		cmd.Env = append(os.Environ(), "ENABLE_PROMPT_CACHING_1H=true")
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

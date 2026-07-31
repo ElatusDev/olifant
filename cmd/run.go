@@ -52,7 +52,7 @@ func Run(args []string) int {
 	if *synth != "" {
 		executorModel = *synth
 	}
-	localExec := psp.NewLocalExecutor(rt.OllamaURL, executorModel)
+	localExec := psp.NewLocalExecutor(rt.OllamaURL, executorModel).WithKeepAlive(rt.OllamaKeepAlive)
 
 	// Build the executor routing table. LocalExecutor is always registered;
 	// ClaudeCodeExecutor only when the `claude` CLI resolves (subscription
@@ -65,7 +65,7 @@ func Run(args []string) int {
 	if claudeCfg, ok := config.ResolveClaude(); ok {
 		executors[psp.ExecutorKindClaude] = psp.NewClaudeCodeExecutor(
 			claudeCfg.Binary, claudeCfg.Model, claudeCfg.Effort, claudeCfg.Timeout, claudeCfg.WorkDir,
-		)
+		).WithCache1H(claudeCfg.Cache1H)
 		if *verbose {
 			fmt.Fprintln(os.Stderr, "config:", claudeCfg.String())
 		}

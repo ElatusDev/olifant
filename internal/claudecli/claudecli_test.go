@@ -216,3 +216,60 @@ func TestStripFence(t *testing.T) {
 		}
 	}
 }
+
+// fakeEnvBinary writes a stub that records the two env vars we care about
+// (the cache flag + an inherited canary) then emits a minimal ok result.
+func fakeEnvBinary(t *testing.T, envFile string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n%s\\n' \"$ENABLE_PROMPT_CACHING_1H\" \"$OLIFANT_TEST_CANARY\" > \"" + envFile + "\"\n" +
+		"cat <<'OLIFANT_EOF'\n{\"is_error\":false,\"result\":\"ok\",\"usage\":{\"output_tokens\":1}}\nOLIFANT_EOF\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	return path
+}
+
+func TestRun_Cache1HSetsEnvAndPreservesInherited(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	bin := fakeEnvBinary(t, envFile)
+	t.Setenv("OLIFANT_TEST_CANARY", "inherited-ok")
+	// Pin the parent to the CONFLICTING value: guaranteed-on relies on
+	// os/exec's documented last-value-wins duplicate handling — the
+	// appended "true" must beat an inherited "false".
+	t.Setenv("ENABLE_PROMPT_CACHING_1H", "false")
+
+	if _, err := Run(context.Background(), bin, Args{Prompt: "p"}, Options{Cache1H: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env capture: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != "true" {
+		t.Errorf("ENABLE_PROMPT_CACHING_1H = %q, want \"true\" (Cache1H on)", lines[0])
+	}
+	if lines[1] != "inherited-ok" {
+		t.Errorf("inherited env lost: canary = %q (D-4 append-not-replace violated)", lines[1])
+	}
+}
+
+func TestRun_Cache1HOffDoesNotAddFlag(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	bin := fakeEnvBinary(t, envFile)
+	t.Setenv("ENABLE_PROMPT_CACHING_1H", "")
+
+	if _, err := Run(context.Background(), bin, Args{Prompt: "p"}, Options{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env capture: %v", err)
+	}
+	if got := strings.Split(string(raw), "\n")[0]; got != "" {
+		t.Errorf("ENABLE_PROMPT_CACHING_1H = %q with Cache1H off, want empty (inherit-only)", got)
+	}
+}

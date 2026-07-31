@@ -23,6 +23,7 @@ type retrieveConfig struct {
 	OllamaURL string
 	ChromaURL string
 	Embedder  string
+	KeepAlive string // ollama keep_alive for the embed call (#119 S4)
 	Tenant    string
 	Database  string
 	Scopes    []string
@@ -58,6 +59,7 @@ func retrieve(ctx context.Context, cfg retrieveConfig) (hits []Hit, embedMs, ret
 		cfg.TopN = 8
 	}
 	oc := ollama.New(cfg.OllamaURL)
+	oc.KeepAlive = cfg.KeepAlive
 	cc := chroma.New(cfg.ChromaURL, cfg.Tenant, cfg.Database)
 
 	embedStart := time.Now()

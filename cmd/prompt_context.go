@@ -53,6 +53,7 @@ func promptContext(args []string) int {
 	res, err := prompt.BuildContext(ctx, prompt.ContextConfig{
 		Goal:      goal,
 		OllamaURL: rt.OllamaURL,
+		OllamaKeepAlive: rt.OllamaKeepAlive,
 		ChromaURL: rt.ChromaURL,
 		Embedder:  rt.Embedder,
 		Tenant:    rt.ChromaTenant,

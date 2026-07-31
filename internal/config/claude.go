@@ -23,12 +23,15 @@ import (
 //	OLIFANT_CLAUDE_EFFORT     default: empty (use CLI's default)
 //	OLIFANT_CLAUDE_TIMEOUT    default: 120 (seconds, per step)
 //	OLIFANT_CLAUDE_WORKDIR    default: empty (subprocess inherits cwd)
+//	OLIFANT_CLAUDE_CACHE_1H   default: true (#119 S4) — sets ENABLE_PROMPT_CACHING_1H
+//	  on the subprocess; false = don't add (inherit the shell's value)
 type ClaudeConfig struct {
 	Binary  string
 	Model   string
 	Effort  string
 	Timeout time.Duration
 	WorkDir string
+	Cache1H bool // set ENABLE_PROMPT_CACHING_1H on the CLI subprocess (#119 S4)
 }
 
 // Default model is Sonnet 4.6 — best speed/cost balance for PSP steps
@@ -69,6 +72,7 @@ func ResolveClaude() (ClaudeConfig, bool) {
 		Effort:  env("OLIFANT_CLAUDE_EFFORT", ""),
 		Timeout: time.Duration(timeoutSec) * time.Second,
 		WorkDir: env("OLIFANT_CLAUDE_WORKDIR", ""),
+		Cache1H: envBool("OLIFANT_CLAUDE_CACHE_1H", true),
 	}
 	return cfg, true
 }
@@ -84,8 +88,8 @@ func (c ClaudeConfig) String() string {
 	if effort == "" {
 		effort = "(default)"
 	}
-	return fmt.Sprintf("claude binary=%s model=%s effort=%s timeout=%s workdir=%s",
-		c.Binary, c.Model, effort, c.Timeout, wd)
+	return fmt.Sprintf("claude binary=%s model=%s effort=%s timeout=%s workdir=%s cache_1h=%t",
+		c.Binary, c.Model, effort, c.Timeout, wd, c.Cache1H)
 }
 
 func envInt(key string, def int) int {

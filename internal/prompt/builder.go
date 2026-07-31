@@ -26,19 +26,20 @@ var stepIDPattern = regexp.MustCompile(`^step_\d+$`)
 // Config drives one Build call. Endpoint + model fields mirror challenge.Config
 // so callers can populate from config.Resolve() the same way.
 type Config struct {
-	Goal        string
-	OllamaURL   string
-	ChromaURL   string
-	Embedder    string
-	Synthesizer string
-	Tenant      string
-	Database    string
-	Scopes      []string // empty = all
-	TopN        int      // default 8
-	Temperature float64  // default 0.1; 0 = greedy
-	MaxTokens   int      // default 4096 — plans need more room than challenge
-	OutDir      string   // default "plans"
-	Verbose     bool
+	Goal            string
+	OllamaURL       string
+	OllamaKeepAlive string // embed-lane keep_alive (#119 S4)
+	ChromaURL       string
+	Embedder        string
+	Synthesizer     string
+	Tenant          string
+	Database        string
+	Scopes          []string // empty = all
+	TopN            int      // default 8
+	Temperature     float64  // default 0.1; 0 = greedy
+	MaxTokens       int      // default 4096 — plans need more room than challenge
+	OutDir          string   // default "plans"
+	Verbose         bool
 
 	// Synth overrides the synthesizer backend. Nil = local Ollama at
 	// OllamaURL (the default until the F4 Promote gate).
@@ -84,6 +85,7 @@ func Build(ctx context.Context, cfg Config) (*Result, error) {
 		OllamaURL: cfg.OllamaURL,
 		ChromaURL: cfg.ChromaURL,
 		Embedder:  cfg.Embedder,
+		KeepAlive: cfg.OllamaKeepAlive,
 		Tenant:    cfg.Tenant,
 		Database:  cfg.Database,
 		Scopes:    cfg.Scopes,

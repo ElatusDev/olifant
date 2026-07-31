@@ -99,6 +99,7 @@ func promptBuild(args []string) int {
 	res, err := prompt.Build(ctx, prompt.Config{
 		Goal:        goal,
 		OllamaURL:   rt.OllamaURL,
+		OllamaKeepAlive: rt.OllamaKeepAlive,
 		ChromaURL:   rt.ChromaURL,
 		Embedder:    rt.Embedder,
 		Synthesizer: synthesizer,

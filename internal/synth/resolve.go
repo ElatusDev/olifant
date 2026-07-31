@@ -15,7 +15,7 @@ import (
 func FromRuntime(rt config.Runtime) (Client, string, error) {
 	switch rt.SynthBackend {
 	case "", "ollama":
-		return NewOllama(rt.OllamaURL), rt.Synthesizer, nil
+		return NewOllama(rt.OllamaURL).WithKeepAlive(rt.OllamaKeepAlive), rt.Synthesizer, nil
 	case "claude":
 		cc, ok := config.ResolveClaude()
 		if !ok {
@@ -31,7 +31,7 @@ func FromRuntime(rt config.Runtime) (Client, string, error) {
 		if model == "" {
 			model = cc.Model
 		}
-		return NewClaude(cc.Binary, cc.Effort, 0), model, nil
+		return NewClaude(cc.Binary, cc.Effort, 0).WithCache1H(cc.Cache1H), model, nil
 	default:
 		return nil, "", fmt.Errorf("unknown OLIFANT_SYNTH_BACKEND %q (want ollama or claude)", rt.SynthBackend)
 	}

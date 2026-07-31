@@ -121,3 +121,10 @@ func readArgv(t *testing.T, path string) map[string]string {
 	}
 	return out
 }
+
+func TestLocalExecutor_WithKeepAlive(t *testing.T) {
+	e := NewLocalExecutor("http://127.0.0.1:1", "m").WithKeepAlive("30m")
+	if e.client.KeepAlive != "30m" {
+		t.Errorf("client KeepAlive = %q, want 30m", e.client.KeepAlive)
+	}
+}

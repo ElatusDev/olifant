@@ -26,6 +26,9 @@ import (
 //	  logged as AP104 (avoid preview/codename pins in production defaults).
 //	OLIFANT_CHROMA_TENANT     default: default_tenant
 //	OLIFANT_CHROMA_DATABASE   default: default_database
+//	OLIFANT_OLLAMA_KEEP_ALIVE default: 30m (#119 S4). Request-level keep_alive on the
+//	  wired generate/embed lanes; "0" unload now, "-1" forever, explicit-empty = send
+//	  nothing (the pre-#123 wire shape — unset-vs-empty distinguished via LookupEnv)
 type Runtime struct {
 	OllamaURL        string
 	ChromaURL        string
@@ -35,6 +38,7 @@ type Runtime struct {
 	SynthClaudeModel string
 	ChromaTenant     string
 	ChromaDatabase   string
+	OllamaKeepAlive  string // request-level keep_alive for generate/embed lanes (#119 S4)
 }
 
 // Resolve returns runtime config with env-var overrides applied.
@@ -48,6 +52,7 @@ func Resolve() Runtime {
 		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", DefaultClaudeModel),
 		ChromaTenant:     env("OLIFANT_CHROMA_TENANT", "default_tenant"),
 		ChromaDatabase:   env("OLIFANT_CHROMA_DATABASE", "default_database"),
+		OllamaKeepAlive:  envAllowEmpty("OLIFANT_OLLAMA_KEEP_ALIVE", "30m"),
 	}
 	r.OllamaURL = strings.TrimRight(r.OllamaURL, "/")
 	r.ChromaURL = strings.TrimRight(r.ChromaURL, "/")
@@ -56,8 +61,18 @@ func Resolve() Runtime {
 
 // String dumps non-secret config for logging.
 func (r Runtime) String() string {
-	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s",
-		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase)
+	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s keep_alive=%s",
+		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase, r.OllamaKeepAlive)
+}
+
+// envAllowEmpty distinguishes unset (→ default) from explicitly empty
+// (→ "" honored). For keep_alive, explicit-empty is the documented
+// "send nothing" rollback lever — the pre-#123 wire shape (workflow §8).
+func envAllowEmpty(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
 }
 
 func env(key, def string) string {

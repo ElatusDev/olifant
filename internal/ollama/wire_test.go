@@ -27,6 +27,61 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
+// capturedBody returns a handler that records each request body and replies ok.
+func capturedBody(t *testing.T, bodies *[]string, reply string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		*bodies = append(*bodies, string(raw))
+		_, _ = io.WriteString(w, reply)
+	}
+}
+
+func TestGenerate_KeepAliveInjection(t *testing.T) {
+	var bodies []string
+	c := newTestClient(t, capturedBody(t, &bodies, `{"response":"ok"}`))
+
+	// Neither set → keep_alive absent entirely (byte-compat with today).
+	if _, err := c.Generate(context.Background(), GenerateRequest{Model: "m", Prompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(bodies[0], "keep_alive") {
+		t.Errorf("keep_alive present with no config: %s", bodies[0])
+	}
+
+	// Client-level default fills.
+	c.KeepAlive = "30m"
+	if _, err := c.Generate(context.Background(), GenerateRequest{Model: "m", Prompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[1], `"keep_alive":"30m"`) {
+		t.Errorf("client default not injected: %s", bodies[1])
+	}
+
+	// Request-level wins over the client default.
+	if _, err := c.Generate(context.Background(), GenerateRequest{Model: "m", Prompt: "p", KeepAlive: "-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[2], `"keep_alive":"-1"`) {
+		t.Errorf("request-level override lost: %s", bodies[2])
+	}
+}
+
+func TestEmbed_KeepAliveInjection(t *testing.T) {
+	var bodies []string
+	c := newTestClient(t, capturedBody(t, &bodies, `{"embeddings":[[0.1]]}`))
+	c.KeepAlive = "15m"
+	if _, err := c.Embed(context.Background(), "bge-m3", []string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[0], `"keep_alive":"15m"`) {
+		t.Errorf("embed keep_alive not injected: %s", bodies[0])
+	}
+}
+
 func TestModelDigest(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" || r.Method != http.MethodGet {

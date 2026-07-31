@@ -23,6 +23,7 @@ type Claude struct {
 	binary  string
 	effort  string
 	timeout time.Duration
+	cache1h bool
 }
 
 // NewClaude returns the claude-CLI synthesizer backend. The binary path
@@ -30,6 +31,13 @@ type Claude struct {
 // ok=true). The model is taken per-request from Request.Model.
 func NewClaude(binary, effort string, timeout time.Duration) *Claude {
 	return &Claude{binary: binary, effort: effort, timeout: timeout}
+}
+
+// WithCache1H enables the 1h ephemeral-cache TTL on the CLI subprocess
+// (ENABLE_PROMPT_CACHING_1H, epic #119 S4).
+func (c *Claude) WithCache1H(v bool) *Claude {
+	c.cache1h = v
+	return c
 }
 
 // Generate invokes the CLI once and returns the raw (schema-conformant) JSON
@@ -45,7 +53,7 @@ func (c *Claude) Generate(ctx context.Context, req Request) (*Response, error) {
 		Effort: c.effort,
 		System: req.System,
 		Schema: schema,
-	}, claudecli.Options{Timeout: c.timeout})
+	}, claudecli.Options{Timeout: c.timeout, Cache1H: c.cache1h})
 	if err != nil {
 		return nil, err
 	}

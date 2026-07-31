@@ -56,6 +56,13 @@ func NewLocalExecutor(baseURL, model string) *LocalExecutor {
 
 func (e *LocalExecutor) ID() string { return e.model }
 
+// WithKeepAlive sets the Ollama client-level keep_alive so the model + KV
+// stay resident across a run's steps (epic #119 S4).
+func (e *LocalExecutor) WithKeepAlive(v string) *LocalExecutor {
+	e.client.KeepAlive = v
+	return e
+}
+
 // Execute sends one prompt with the given JSON Schema constraint and returns
 // the parsed Response. Empty schema disables grammar-constrained decoding.
 func (e *LocalExecutor) Execute(ctx context.Context, prompt string, schema map[string]interface{}) (Response, error) {
