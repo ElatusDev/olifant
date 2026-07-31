@@ -37,8 +37,9 @@ type Response struct {
 // LocalExecutor backs the prompt-runner with Ollama-hosted models. v0 ships
 // this as the default. Per psp-v1.md §10.
 type LocalExecutor struct {
-	client *ollama.Client
-	model  string
+	client       *ollama.Client
+	model        string
+	modelVersion string // blob digest for cache keying; "" = unresolved
 }
 
 // NewLocalExecutor wires an Ollama client + model.

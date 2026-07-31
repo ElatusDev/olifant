@@ -49,6 +49,30 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return out.Version, nil
 }
 
+// ModelDigest resolves a model tag to its current blob digest via /api/tags.
+// Mutable tags (`qwen3:8b`) silently move on `ollama pull`; the digest is the
+// version signal the response cache keys on so a moved tag dead-ends stale
+// entries (epic #119 S1, workflow D-3). Returns "" without error when the
+// tag is not present locally — callers degrade to tag-only keying.
+func (c *Client) ModelDigest(ctx context.Context, model string) (string, error) {
+	var out struct {
+		Models []struct {
+			Name   string `json:"name"`
+			Model  string `json:"model"`
+			Digest string `json:"digest"`
+		} `json:"models"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/tags", nil, &out); err != nil {
+		return "", err
+	}
+	for _, m := range out.Models {
+		if m.Name == model || m.Model == model || m.Name == model+":latest" {
+			return m.Digest, nil
+		}
+	}
+	return "", nil
+}
+
 // EmbedRequest matches the /api/embed body.
 type EmbedRequest struct {
 	Model string   `json:"model"`

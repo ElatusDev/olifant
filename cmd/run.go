@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/config"
+	"github.com/ElatusDev/olifant/internal/ollama"
 	"github.com/ElatusDev/olifant/internal/psp"
+	"github.com/ElatusDev/olifant/internal/respcache"
 )
 
 // Run dispatches `olifant run --plan <file>`.
@@ -19,6 +21,8 @@ func Run(args []string) int {
 	verbose := fs.Bool("v", false, "verbose protocol log to stderr")
 	timeoutSec := fs.Int("timeout", 1800, "overall timeout in seconds (default 30 min)")
 	synth := fs.String("synth", "", "executor model override (defaults to OLIFANT_SYNTHESIZER)")
+	refresh := fs.Bool("refresh", false, "bust the response cache: re-invoke the model and overwrite stored responses")
+	noCache := fs.Bool("no-cache", false, "disable the response cache entirely (no read, no write)")
 	_ = fs.Parse(args)
 
 	if *planPath == "" {
@@ -51,9 +55,10 @@ func Run(args []string) int {
 	localExec := psp.NewLocalExecutor(rt.OllamaURL, executorModel)
 
 	// Build the executor routing table. LocalExecutor is always registered;
-	// ClaudeAPIExecutor only when ANTHROPIC_API_KEY is present. Plans that
-	// reference an unregistered executor fail at pre-flight (psp.Run) with
-	// a clear error instead of silently routing elsewhere.
+	// ClaudeCodeExecutor only when the `claude` CLI resolves (subscription
+	// auth — no API key involved). Plans that reference an unregistered
+	// executor fail at pre-flight (psp.Run) with a clear error instead of
+	// silently routing elsewhere.
 	executors := map[string]psp.Executor{
 		psp.ExecutorKindLocal: localExec,
 	}
@@ -63,6 +68,31 @@ func Run(args []string) int {
 		)
 		if *verbose {
 			fmt.Fprintln(os.Stderr, "config:", claudeCfg.String())
+		}
+	}
+
+	// Response cache (epic #119 S1): wrap every routed executor. The store
+	// lives under ~/.olifant/responses (OLIFANT_RESPONSE_CACHE_DIR override)
+	// — outside every corpus walk. An open failure degrades to uncached
+	// execution; the eval-gate lane never passes through here (workflow D-4).
+	if !*noCache {
+		if store, serr := respcache.Open(""); serr == nil {
+			// Pin the Ollama blob digest into the local lane's cache key so a
+			// tag moved by `ollama pull` busts stale entries (D-3/AC5).
+			// Best-effort: an unreachable endpoint degrades to tag-only keying.
+			digestCtx, cancelDigest := context.WithTimeout(context.Background(), 3*time.Second)
+			if digest, derr := ollama.New(rt.OllamaURL).ModelDigest(digestCtx, executorModel); derr == nil && digest != "" {
+				localExec.WithModelVersion(digest)
+			}
+			cancelDigest()
+			for kind, ex := range executors {
+				executors[kind] = psp.NewCacheExecutor(ex, store, *refresh)
+			}
+			if *verbose {
+				fmt.Fprintln(os.Stderr, "config: response cache at", store.Root())
+			}
+		} else if *verbose {
+			fmt.Fprintln(os.Stderr, "config: response cache disabled:", serr)
 		}
 	}
 
@@ -81,7 +111,7 @@ func Run(args []string) int {
 	defer cancel()
 
 	result, rerr := psp.Run(ctx, psp.RunnerConfig{
-		Executor:  localExec, // backward-compat default for callsites not using Executors
+		Executor:  executors[psp.ExecutorKindLocal], // backward-compat default for callsites not using Executors
 		Executors: executors,
 		Plan:      plan,
 		KBRoot:    kbRoot,
