@@ -168,3 +168,20 @@ func TestEnvBool(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveClaude_Cache1H(t *testing.T) {
+	t.Setenv("OLIFANT_CLAUDE_BINARY", "/bin/sh") // resolvable stand-in
+	t.Setenv("OLIFANT_CLAUDE_CACHE_1H", "")
+	cfg, ok := ResolveClaude()
+	if !ok {
+		t.Fatal("ResolveClaude not ok with /bin/sh stand-in")
+	}
+	if !cfg.Cache1H {
+		t.Error("Cache1H default = false, want true (opt-out design)")
+	}
+	t.Setenv("OLIFANT_CLAUDE_CACHE_1H", "false")
+	cfg, _ = ResolveClaude()
+	if cfg.Cache1H {
+		t.Error("Cache1H = true with OLIFANT_CLAUDE_CACHE_1H=false")
+	}
+}

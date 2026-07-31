@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ElatusDev/olifant/internal/config"
+
 	"github.com/ElatusDev/olifant/internal/ollama"
 )
 
@@ -69,5 +71,28 @@ func TestOllamaGenerateError(t *testing.T) {
 	_, err := NewOllama(srv.URL).Generate(context.Background(), Request{Model: "m", Prompt: "p"})
 	if err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("expected HTTP 404 error, got %v", err)
+	}
+}
+
+func TestFromRuntime_OllamaKeepAliveWired(t *testing.T) {
+	c, _, err := FromRuntime(config.Runtime{SynthBackend: "ollama", OllamaURL: "http://127.0.0.1:1", OllamaKeepAlive: "30m"})
+	if err != nil {
+		t.Fatalf("FromRuntime: %v", err)
+	}
+	o, ok := c.(*Ollama)
+	if !ok {
+		t.Fatalf("backend type %T, want *Ollama", c)
+	}
+	if o.oc.KeepAlive != "30m" {
+		t.Errorf("client KeepAlive = %q, want 30m (config not plumbed)", o.oc.KeepAlive)
+	}
+}
+
+// ToOllamaRequest must stay a pure mapper — keep_alive injection happens in
+// the client, so the debug dump equals the mapper output (workflow D-1/IA6).
+func TestToOllamaRequest_NoKeepAliveInjection(t *testing.T) {
+	req := ToOllamaRequest(Request{Model: "m", Prompt: "p"})
+	if req.KeepAlive != "" {
+		t.Errorf("ToOllamaRequest injected keep_alive %q — must stay pure", req.KeepAlive)
 	}
 }

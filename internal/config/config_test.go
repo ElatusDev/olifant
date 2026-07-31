@@ -27,3 +27,14 @@ func TestResolve_SynthBackendOllamaFallback(t *testing.T) {
 		t.Errorf("String() missing backend: %s", rt.String())
 	}
 }
+
+func TestResolve_OllamaKeepAlive(t *testing.T) {
+	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "")
+	if got := Resolve().OllamaKeepAlive; got != "30m" {
+		t.Errorf("default OllamaKeepAlive = %q, want 30m", got)
+	}
+	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "-1")
+	if got := Resolve().OllamaKeepAlive; got != "-1" {
+		t.Errorf("override OllamaKeepAlive = %q, want -1", got)
+	}
+}
