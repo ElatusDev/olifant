@@ -6,9 +6,10 @@
 // (`~/.olifant/responses` by default) so a cached model response can never
 // become retrievable truth (AP184 / workflow D-2).
 //
-// Writes are idempotent: the same key always serializes to the same object
-// path, and objects land via temp+rename so concurrent sessions cannot
-// expose a partial file (workflow D-5).
+// Writes are crash-safe and race-benign: the same key always serializes to
+// the same object path, and objects land via temp+rename, so concurrent
+// sessions never expose a partial file — the last completed writer wins
+// (workflow D-5).
 package respcache
 
 import (
@@ -63,11 +64,13 @@ type Entry struct {
 	CreatedUnix         int64           `json:"created_unix"`
 }
 
-// Record is one ledger line in log.ndjson.
+// Record is one ledger line in log.ndjson. Events: hit/miss from Get, store
+// from Put, invalidate from Delete, drift when a hit's payload later failed
+// to decode at the caller (served responses = hits − drifts).
 type Record struct {
 	TS                  string `json:"ts"`
 	KeySHA              string `json:"key_sha"`
-	Event               string `json:"event"` // hit | miss | store
+	Event               string `json:"event"` // hit | miss | store | invalidate | drift
 	Model               string `json:"model"`
 	ModelVersion        string `json:"model_version,omitempty"`
 	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
@@ -173,6 +176,24 @@ func (s *Store) Put(k Key, e Entry) error {
 	s.appendRecord(Record{KeySHA: sha, Event: "store", Model: e.Model, ModelVersion: e.ModelVersion,
 		CacheCreationTokens: e.CacheCreationTokens, CacheReadTokens: e.CacheReadTokens})
 	return nil
+}
+
+// Delete removes the object stored under the key (no-op if absent) and
+// ledgers an invalidate event. The runner calls this when a served or fresh
+// response fails step validation — a NAKed response must not be replayed on
+// the next run.
+func (s *Store) Delete(k Key) {
+	sha := k.SHA()
+	if err := os.Remove(s.objectPath(sha)); err != nil {
+		return // nothing was cached (or removal failed) — no phantom invalidations
+	}
+	s.appendRecord(Record{KeySHA: sha, Event: "invalidate", Model: k.Model, ModelVersion: k.ModelVersion})
+}
+
+// RecordDrift ledgers that a hit's payload failed to decode at the caller
+// and a live call was made instead — keeps S2 hit-rate honest.
+func (s *Store) RecordDrift(k Key) {
+	s.appendRecord(Record{KeySHA: k.SHA(), Event: "drift", Model: k.Model, ModelVersion: k.ModelVersion})
 }
 
 // appendRecord appends one NDJSON line to the ledger. Ledger failures are

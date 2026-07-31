@@ -246,6 +246,14 @@ func runStep(
 			return result, nil
 		}
 
+		// A NAKed response must never be replayed from the response cache on
+		// a future run — invalidate before retrying or closing (epic #119 S1).
+		if inv, ok := executor.(interface {
+			Invalidate(prompt string, schema map[string]interface{})
+		}); ok {
+			inv.Invalidate(prompt, step.ExpectedOutput.Schema)
+		}
+
 		log(StateRetry, fmt.Sprintf("seq=%d attempt=%d blockers=%d", seq, attempt, countBlockers(violations)))
 		if attempt < maxAttempts {
 			// Exponential backoff

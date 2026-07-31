@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ElatusDev/olifant/internal/config"
+	"github.com/ElatusDev/olifant/internal/ollama"
 	"github.com/ElatusDev/olifant/internal/psp"
 	"github.com/ElatusDev/olifant/internal/respcache"
 )
@@ -76,6 +77,14 @@ func Run(args []string) int {
 	// execution; the eval-gate lane never passes through here (workflow D-4).
 	if !*noCache {
 		if store, serr := respcache.Open(""); serr == nil {
+			// Pin the Ollama blob digest into the local lane's cache key so a
+			// tag moved by `ollama pull` busts stale entries (D-3/AC5).
+			// Best-effort: an unreachable endpoint degrades to tag-only keying.
+			digestCtx, cancelDigest := context.WithTimeout(context.Background(), 3*time.Second)
+			if digest, derr := ollama.New(rt.OllamaURL).ModelDigest(digestCtx, executorModel); derr == nil && digest != "" {
+				localExec.WithModelVersion(digest)
+			}
+			cancelDigest()
 			for kind, ex := range executors {
 				executors[kind] = psp.NewCacheExecutor(ex, store, *refresh)
 			}
