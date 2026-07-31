@@ -134,3 +134,50 @@ func TestSystemPrompt_NamesPSPAndRequiredFields(t *testing.T) {
 		}
 	}
 }
+
+// #122 S3: the cache-relevant layout property — stable prefix first. Pinned
+// by ORDER and ABSENCE assertions, not golden prose bytes (workflow D-5).
+func TestBuildPromptText_StablePrefixFirstLayout(t *testing.T) {
+	hits := []Hit{
+		{Doc: "chunk one body\n", Distance: 0.3121, Scope: "backend/corpus", Meta: map[string]interface{}{"source": "a.md"}},
+		{Doc: "chunk two body\n", Distance: 0.487, Scope: "universal/corpus", Meta: map[string]interface{}{"source": "b.md"}},
+	}
+	out := buildPromptText("volatile goal text", hits)
+
+	ctxIdx := strings.Index(out, "RETRIEVED CONTEXT")
+	distIdx := strings.Index(out, "CHUNK DISTANCES")
+	goalIdx := strings.Index(out, "USER GOAL:")
+	if ctxIdx == -1 || distIdx == -1 || goalIdx == -1 {
+		t.Fatalf("missing section marker(s): ctx=%d dist=%d goal=%d\n%s", ctxIdx, distIdx, goalIdx, out)
+	}
+	if ctxIdx >= distIdx || distIdx >= goalIdx {
+		t.Errorf("layout order broken: want chunks < distances < goal, got ctx=%d dist=%d goal=%d", ctxIdx, distIdx, goalIdx)
+	}
+	// AC1: nothing per-call-volatile before the goal marker except the
+	// distances trailer — specifically no inline distance= header floats.
+	if strings.Contains(out[:goalIdx], "distance=") {
+		t.Errorf("inline distance= float inside the cached prefix (AC1):\n%s", out[:goalIdx])
+	}
+	// Trailer carries one entry per hit.
+	trailerLine := out[distIdx : strings.Index(out[distIdx:], "\n")+distIdx]
+	for _, want := range []string{"1=0.3121", "2=0.4870"} {
+		if !strings.Contains(trailerLine, want) {
+			t.Errorf("distances trailer missing %q: %q", want, trailerLine)
+		}
+	}
+}
+
+func TestBuildPromptText_ZeroHitsShape(t *testing.T) {
+	out := buildPromptText("some goal", nil)
+	if strings.Contains(out, "CHUNK DISTANCES") {
+		t.Errorf("distances trailer present with zero hits:\n%s", out)
+	}
+	goalIdx := strings.Index(out, "USER GOAL:")
+	ctxIdx := strings.Index(out, "RETRIEVED CONTEXT")
+	if ctxIdx == -1 || goalIdx == -1 || ctxIdx > goalIdx {
+		t.Errorf("zero-hit layout broken (ctx=%d goal=%d):\n%s", ctxIdx, goalIdx, out)
+	}
+	if !strings.Contains(out, "PRODUCE THE PROMPT-STEP PLAN") {
+		t.Errorf("instruction tail missing:\n%s", out)
+	}
+}
