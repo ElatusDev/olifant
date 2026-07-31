@@ -18,6 +18,11 @@ import (
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	// KeepAlive, when set, is injected as the request-level `keep_alive`
+	// on Generate/Embed calls that don't specify their own — holds the
+	// model + KV cache resident between calls (epic #119 S4). Ollama
+	// duration string ("30m"), "0" = unload now, "-1" = forever.
+	KeepAlive string
 }
 
 // New returns a client with a generous default timeout (large models can
@@ -80,6 +85,8 @@ type EmbedRequest struct {
 	// Truncate=true silently caps inputs to the model's context window.
 	// Without this, an oversize input aborts the whole batch with HTTP 400.
 	Truncate bool `json:"truncate"`
+	// KeepAlive — see GenerateRequest.KeepAlive; keeps the embedder warm.
+	KeepAlive string `json:"keep_alive,omitempty"`
 }
 
 // EmbedResponse — embeddings is one float vector per input element, in order.
@@ -96,7 +103,7 @@ func (c *Client) Embed(ctx context.Context, model string, inputs []string) ([][]
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	req := EmbedRequest{Model: model, Input: inputs, Truncate: true}
+	req := EmbedRequest{Model: model, Input: inputs, Truncate: true, KeepAlive: c.KeepAlive}
 	var out EmbedResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embed", req, &out); err != nil {
 		return nil, err
@@ -122,6 +129,9 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options,omitempty"`
 	Format  interface{}            `json:"format,omitempty"`
 	Suffix  string                 `json:"suffix,omitempty"`
+	// KeepAlive holds the model resident after this call (Ollama duration
+	// string). Empty = server default; Client.KeepAlive fills it when unset.
+	KeepAlive string `json:"keep_alive,omitempty"`
 }
 
 // GenerateResponse — the synthesized text plus timing metadata.
@@ -140,6 +150,9 @@ type GenerateResponse struct {
 // Generate runs one non-streamed completion against the given model.
 func (c *Client) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
 	req.Stream = false
+	if req.KeepAlive == "" {
+		req.KeepAlive = c.KeepAlive // request-level wins; client default fills (D-1)
+	}
 	var out GenerateResponse
 	if err := c.do(ctx, http.MethodPost, "/api/generate", req, &out); err != nil {
 		return nil, err
