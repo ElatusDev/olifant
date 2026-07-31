@@ -98,6 +98,7 @@ func (c *CacheExecutor) Execute(ctx context.Context, prompt string, schema map[s
 		if entry, ok := c.store.Get(key); ok {
 			var resp Response
 			if err := json.Unmarshal(entry.Payload, &resp); err == nil {
+				resp.ServedFromCache = true // per-serving flag, never persisted (D-4)
 				return resp, nil
 			}
 			// Undecodable payload (format drift): ledger it so hit-rate

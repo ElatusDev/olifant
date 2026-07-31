@@ -127,7 +127,8 @@ type StepResult struct {
 	StepOutputTokens           int
 	CacheCreationTokens        int
 	CacheReadTokens            int
-	ContextTokensConsumedSoFar int // cumulative
+	ServedFromCache            bool // response served by the CacheExecutor (zero pre-cache)
+	ContextTokensConsumedSoFar int  // cumulative
 	ExecutorKind               string
 	ExecutorID                 string
 	ValidationPassFirstTry     bool
@@ -172,6 +173,7 @@ type StepSummary struct {
 	EvalTokens          int    `yaml:"eval_tokens,omitempty"`
 	ExecutorKind        string `yaml:"executor_kind,omitempty"`
 	ExecutorID          string `yaml:"executor_id,omitempty"`
+	ServedFromCache     bool   `yaml:"served_from_cache,omitempty"`
 	CacheCreationTokens int    `yaml:"cache_creation_tokens,omitempty"`
 	CacheReadTokens     int    `yaml:"cache_read_tokens,omitempty"`
 }

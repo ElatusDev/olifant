@@ -132,19 +132,25 @@ func Run(args []string) int {
 
 	// Per-step + cache breakdown — useful for smoke verification on hybrid plans.
 	if *verbose && len(result.Steps) > 0 {
-		var cacheCreate, cacheRead int
+		var cacheCreate, cacheRead, served int
 		for _, sr := range result.Steps {
 			cacheCreate += sr.CacheCreationTokens
 			cacheRead += sr.CacheReadTokens
-			fmt.Printf("  step %d %-20s executor=%-7s id=%-30s elapsed=%6dms eval=%5d cache(rw)=%d/%d\n",
-				sr.Seq, sr.StepID, sr.ExecutorKind, sr.ExecutorID, sr.ExecTimeMs, sr.EvalTokens, sr.CacheReadTokens, sr.CacheCreationTokens)
+			mark := ""
+			if sr.ServedFromCache {
+				served++
+				mark = " cached"
+			}
+			fmt.Printf("  step %d %-20s executor=%-7s id=%-30s elapsed=%6dms eval=%5d cache(rw)=%d/%d%s\n",
+				sr.Seq, sr.StepID, sr.ExecutorKind, sr.ExecutorID, sr.ExecTimeMs, sr.EvalTokens, sr.CacheReadTokens, sr.CacheCreationTokens, mark)
 		}
-		if cacheCreate+cacheRead > 0 {
+		// served = our response cache (#119 S2); read/created = Anthropic pass-through.
+		if cacheCreate+cacheRead > 0 || served > 0 {
 			pct := 0.0
 			if denom := cacheCreate + cacheRead; denom > 0 {
 				pct = 100.0 * float64(cacheRead) / float64(denom)
 			}
-			fmt.Printf("  cache totals — read=%d created=%d hit_rate=%.1f%%\n", cacheRead, cacheCreate, pct)
+			fmt.Printf("  cache totals — read=%d created=%d hit_rate=%.1f%% served=%d/%d\n", cacheRead, cacheCreate, pct, served, len(result.Steps))
 		}
 	}
 
