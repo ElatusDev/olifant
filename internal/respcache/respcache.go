@@ -75,6 +75,7 @@ type Record struct {
 	ModelVersion        string `json:"model_version,omitempty"`
 	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
 	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`
+	Note                string `json:"note,omitempty"` // summary payload for key-less events (prune)
 }
 
 // Store is a response cache rooted at a single directory.

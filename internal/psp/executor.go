@@ -32,6 +32,10 @@ type Response struct {
 	CacheCreationTokens int
 	CacheReadTokens     int
 	TotalDurationNs     int64
+	// ServedFromCache is set by the CacheExecutor on the served copy only —
+	// stored payloads always carry false (workflow #121 D-4), so pre-cache
+	// aggregates and plans stay byte-compatible (zero-value rule).
+	ServedFromCache bool `json:"ServedFromCache,omitempty"`
 }
 
 // LocalExecutor backs the prompt-runner with Ollama-hosted models. v0 ships

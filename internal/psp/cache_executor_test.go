@@ -263,3 +263,69 @@ func TestCacheExecutor_UndecodablePayloadFallsThrough(t *testing.T) {
 		t.Errorf("fallthrough not ledgered as drift — S2 hit-rate would overcount: %s", raw)
 	}
 }
+
+// #121 A3: the served-from-cache flag is set per-serving, never persisted,
+// and plumbed runner → StepResult → StepSummary (AC3).
+func TestRun_ServedFromCachePlumbedToStepResult(t *testing.T) {
+	store := testCacheStore(t)
+	inner := &countingExecutor{resp: Response{RawText: `{"ok":true}`, Output: StepOutput{"ok": true}}}
+	wrapped := NewCacheExecutor(inner, store, false)
+	step := minimalStep("step_01", "")
+	plan := minimalPlan([]Step{step})
+	cfg := RunnerConfig{Executor: wrapped, Executors: map[string]Executor{ExecutorKindLocal: wrapped}, Plan: plan}
+
+	cold, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("cold run: %v", err)
+	}
+	if cold.Steps[0].ServedFromCache {
+		t.Error("cold run marked served-from-cache")
+	}
+	warm, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("warm run: %v", err)
+	}
+	if !warm.Steps[0].ServedFromCache {
+		t.Error("warm run not marked served-from-cache (AC3)")
+	}
+	if inner.calls != 1 {
+		t.Errorf("inner calls = %d, want 1", inner.calls)
+	}
+	var found bool
+	for _, ss := range warm.Aggregate.StepSummaries {
+		if ss.ServedFromCache {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("aggregate StepSummary missing served_from_cache")
+	}
+}
+
+// Stored payloads must always carry ServedFromCache=false (D-4): the flag is
+// set on the served copy after unmarshal, so a hit-of-a-hit stays true only
+// per-serving and the object bytes stay stable.
+func TestCacheExecutor_StoredPayloadNeverMarkedServed(t *testing.T) {
+	store := testCacheStore(t)
+	inner := &countingExecutor{resp: Response{RawText: "v", Output: StepOutput{"ok": true}}}
+	ce := NewCacheExecutor(inner, store, false).(*CacheExecutor)
+	ctx := context.Background()
+	mustExecute(t, ce, ctx, "prompt-flag", nil)
+
+	key := ce.key("prompt-flag", nil)
+	entry, ok := store.Get(key)
+	if !ok {
+		t.Fatal("entry missing after miss+store")
+	}
+	var stored Response
+	if err := json.Unmarshal(entry.Payload, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.ServedFromCache {
+		t.Error("stored payload marked served — D-4 violated, object bytes not stable")
+	}
+	served := mustExecute(t, ce, ctx, "prompt-flag", nil)
+	if !served.ServedFromCache {
+		t.Error("served copy not flagged")
+	}
+}

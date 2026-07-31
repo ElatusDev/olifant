@@ -229,6 +229,7 @@ func runStep(
 		result.StepOutputTokens += resp.OutputTokens
 		result.CacheCreationTokens += resp.CacheCreationTokens
 		result.CacheReadTokens += resp.CacheReadTokens
+		result.ServedFromCache = resp.ServedFromCache // final attempt wins
 		result.ExecTimeMs += execTimeMs
 		result.ExecutorKind = step.ResolvedExecutor()
 		result.ExecutorID = executor.ID()
@@ -524,6 +525,7 @@ func makeAggregate(
 			ExecutorID:          sr.ExecutorID,
 			CacheCreationTokens: sr.CacheCreationTokens,
 			CacheReadTokens:     sr.CacheReadTokens,
+			ServedFromCache:     sr.ServedFromCache,
 		})
 	}
 	return agg

@@ -39,6 +39,8 @@ func main() {
 		os.Exit(cmd.Prompt(args))
 	case "run":
 		os.Exit(cmd.Run(args))
+	case "cache":
+		os.Exit(cmd.Cache(args))
 	case "eval":
 		os.Exit(cmd.Eval(args))
 	case "validate":
@@ -89,6 +91,7 @@ SUBCOMMANDS:
   harvest      run | accept — mine reactions ⨝ turns into human-gated proposals (eval cases / corpus gaps / dict terms)
   retrieve     "<question>" — top-N scoped, cite-tagged KB chunks (retrieval-instead-of-reading; scope inferred from cwd)
   digest       <path> — cite-gated, SHA-cached local-model summary of one artifact
+  cache        status | prune — response-cache observability + lifecycle (entries, hit-rate, bounded prune)
   history      scan — walk repo commit history and emit JSONL training data
   dataset      build | stats | index — extract Tier 1+2 JSONL or index failure-modes to ChromaDB
   embedder     train | pull | ls — Phase B1b domain-embedder training on Modal

@@ -18,7 +18,7 @@
 #
 # package	floor
 github.com/ElatusDev/olifant	0
-github.com/ElatusDev/olifant/cmd	75
+github.com/ElatusDev/olifant/cmd	76
 github.com/ElatusDev/olifant/dataset	86
 github.com/ElatusDev/olifant/history	85
 github.com/ElatusDev/olifant/internal/challenge	85
@@ -40,4 +40,4 @@ github.com/ElatusDev/olifant/internal/shortterm	90
 github.com/ElatusDev/olifant/internal/synth	96
 github.com/ElatusDev/olifant/internal/validate	86
 github.com/ElatusDev/olifant/internal/advice	85
-github.com/ElatusDev/olifant/internal/respcache	80
+github.com/ElatusDev/olifant/internal/respcache	84
