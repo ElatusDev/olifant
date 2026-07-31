@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -105,12 +106,12 @@ func cachePrune(args []string) int {
 		fmt.Fprintln(os.Stderr, "olifant cache prune:", err)
 		return 1
 	}
-	verb := "deleted"
+	verb, reapVerb := "deleted", "reaped"
 	if res.DryRun {
-		verb = "would delete"
+		verb, reapVerb = "would delete", "would reap"
 	}
-	fmt.Printf("%s %d entries (%s reclaimed), reaped %d temp orphans; %d entries (%s) remain\n",
-		verb, res.Deleted, humanBytes(res.ReclaimedBytes), res.TempReaped, res.Remaining, humanBytes(res.RemainingBytes))
+	fmt.Printf("%s %d entries (%s reclaimed), %s %d temp orphans; %d entries (%s) remain\n",
+		verb, res.Deleted, humanBytes(res.ReclaimedBytes), reapVerb, res.TempReaped, res.Remaining, humanBytes(res.RemainingBytes))
 	return 0
 }
 
@@ -129,7 +130,7 @@ func parseBytes(s string) (int64, error) {
 		}
 	}
 	n, err := strconv.ParseInt(strings.TrimSpace(up), 10, 64)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > math.MaxInt64/mult {
 		return 0, fmt.Errorf("bad size %q (want e.g. 500MB, 2GB, or bytes)", s)
 	}
 	return n * mult, nil

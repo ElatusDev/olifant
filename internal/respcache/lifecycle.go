@@ -123,7 +123,8 @@ func (s *Store) Stats() (Stats, error) {
 }
 
 // PruneOptions bound a prune run. At least one of OlderThan/MaxBytes/All
-// must be set — an unbounded prune is refused at the CLI layer.
+// must be set — Prune itself refuses an unbounded run (the CLI surfaces
+// that refusal as a runtime error).
 type PruneOptions struct {
 	OlderThan time.Duration // delete entries with mtime older than this (0 = no age bound)
 	MaxBytes  int64         // after the age pass, evict oldest-first until the store fits (0 = no size bound)
@@ -234,10 +235,16 @@ func (s *Store) Prune(opts PruneOptions) (PruneResult, error) {
 	}
 
 	for _, o := range doomed {
-		res.Deleted++
-		res.ReclaimedBytes += o.size
-		if !opts.DryRun {
-			_ = os.Remove(o.path)
+		if opts.DryRun {
+			res.Deleted++
+			res.ReclaimedBytes += o.size
+			continue
+		}
+		// Count only what was actually removed — a read-only mount or a
+		// concurrent pruner must not inflate the report (AP288-class honesty).
+		if err := os.Remove(o.path); err == nil {
+			res.Deleted++
+			res.ReclaimedBytes += o.size
 		}
 	}
 	res.Remaining = len(objects) - res.Deleted
