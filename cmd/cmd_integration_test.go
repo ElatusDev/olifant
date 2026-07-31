@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ElatusDev/olifant/internal/ollama"
+	"github.com/ElatusDev/olifant/internal/respcache"
 )
 
 // fakeStack stands up fake Ollama + Chroma servers, points OLIFANT_* env at
@@ -17,6 +18,11 @@ import (
 // command. `genJSON` is what /api/generate "produces".
 func fakeStack(t *testing.T, genJSON string) {
 	t.Helper()
+	// Isolate the response cache per-test: without this, `Run`-exercising
+	// tests write to the developer's real ~/.olifant/responses AND get
+	// silently served from it on re-runs — skipping the fake wire servers
+	// below and masking regressions (found via `cache status`, #121).
+	t.Setenv(respcache.EnvDir, t.TempDir())
 	oll := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/version":
