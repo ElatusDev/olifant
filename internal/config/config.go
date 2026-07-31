@@ -35,6 +35,7 @@ type Runtime struct {
 	SynthClaudeModel string
 	ChromaTenant     string
 	ChromaDatabase   string
+	OllamaKeepAlive  string // request-level keep_alive for generate/embed lanes (#119 S4)
 }
 
 // Resolve returns runtime config with env-var overrides applied.
@@ -48,6 +49,7 @@ func Resolve() Runtime {
 		SynthClaudeModel: env("OLIFANT_SYNTH_CLAUDE_MODEL", DefaultClaudeModel),
 		ChromaTenant:     env("OLIFANT_CHROMA_TENANT", "default_tenant"),
 		ChromaDatabase:   env("OLIFANT_CHROMA_DATABASE", "default_database"),
+		OllamaKeepAlive:  env("OLIFANT_OLLAMA_KEEP_ALIVE", "30m"),
 	}
 	r.OllamaURL = strings.TrimRight(r.OllamaURL, "/")
 	r.ChromaURL = strings.TrimRight(r.ChromaURL, "/")
@@ -56,8 +58,8 @@ func Resolve() Runtime {
 
 // String dumps non-secret config for logging.
 func (r Runtime) String() string {
-	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s",
-		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase)
+	return fmt.Sprintf("ollama=%s chroma=%s embedder=%s synth=%s backend=%s tenant=%s/db=%s keep_alive=%s",
+		r.OllamaURL, r.ChromaURL, r.Embedder, r.Synthesizer, r.SynthBackend, r.ChromaTenant, r.ChromaDatabase, r.OllamaKeepAlive)
 }
 
 func env(key, def string) string {

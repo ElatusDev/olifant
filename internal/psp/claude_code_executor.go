@@ -28,6 +28,7 @@ type ClaudeCodeExecutor struct {
 	timeout      time.Duration
 	workDir      string
 	systemPrompt string
+	cache1h      bool
 }
 
 // NewClaudeCodeExecutor constructs an executor that shells out to the
@@ -53,6 +54,13 @@ func (e *ClaudeCodeExecutor) WithSystemPrompt(s string) *ClaudeCodeExecutor {
 	return e
 }
 
+// WithCache1H enables the 1h ephemeral-cache TTL on the CLI subprocess
+// (ENABLE_PROMPT_CACHING_1H, epic #119 S4).
+func (e *ClaudeCodeExecutor) WithCache1H(v bool) *ClaudeCodeExecutor {
+	e.cache1h = v
+	return e
+}
+
 // Execute invokes `claude -p` via claudecli and maps the result onto a PSP
 // Response. The schema (if non-empty) is enforced server-side via
 // --json-schema; claudecli returns an error on an empty response, and this
@@ -64,7 +72,7 @@ func (e *ClaudeCodeExecutor) Execute(ctx context.Context, prompt string, schema 
 		Effort: e.effort,
 		System: e.systemPrompt,
 		Schema: schema,
-	}, claudecli.Options{WorkDir: e.workDir, Timeout: e.timeout})
+	}, claudecli.Options{WorkDir: e.workDir, Timeout: e.timeout, Cache1H: e.cache1h})
 	if err != nil {
 		return Response{TotalDurationNs: res.ElapsedNs}, err
 	}
