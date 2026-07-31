@@ -101,6 +101,9 @@ func synthesize(ctx context.Context, cfg synthConfig, goal string, hits []Hit) (
 func buildPromptText(goal string, hits []Hit) string {
 	var sb strings.Builder
 	sb.WriteString("RETRIEVED CONTEXT (top corpus chunks ordered by similarity):\n\n")
+	if len(hits) == 0 {
+		sb.WriteString("(none)\n\n")
+	}
 	for i, h := range hits {
 		source, _ := h.Meta["source"].(string)
 		anchor, _ := h.Meta["source_anchor"].(string)

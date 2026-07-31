@@ -150,8 +150,9 @@ func TestBuildPromptText_StablePrefixFirstLayout(t *testing.T) {
 	if ctxIdx == -1 || distIdx == -1 || goalIdx == -1 {
 		t.Fatalf("missing section marker(s): ctx=%d dist=%d goal=%d\n%s", ctxIdx, distIdx, goalIdx, out)
 	}
-	if ctxIdx >= distIdx || distIdx >= goalIdx {
-		t.Errorf("layout order broken: want chunks < distances < goal, got ctx=%d dist=%d goal=%d", ctxIdx, distIdx, goalIdx)
+	instrIdx := strings.Index(out, "PRODUCE THE PROMPT-STEP PLAN")
+	if ctxIdx >= distIdx || distIdx >= goalIdx || instrIdx == -1 || goalIdx >= instrIdx {
+		t.Errorf("layout order broken: want chunks < distances < goal < instruction, got ctx=%d dist=%d goal=%d instr=%d", ctxIdx, distIdx, goalIdx, instrIdx)
 	}
 	// AC1: nothing per-call-volatile before the goal marker except the
 	// distances trailer — specifically no inline distance= header floats.
@@ -177,7 +178,11 @@ func TestBuildPromptText_ZeroHitsShape(t *testing.T) {
 	if ctxIdx == -1 || goalIdx == -1 || ctxIdx > goalIdx {
 		t.Errorf("zero-hit layout broken (ctx=%d goal=%d):\n%s", ctxIdx, goalIdx, out)
 	}
-	if !strings.Contains(out, "PRODUCE THE PROMPT-STEP PLAN") {
-		t.Errorf("instruction tail missing:\n%s", out)
+	instrIdx := strings.Index(out, "PRODUCE THE PROMPT-STEP PLAN")
+	if instrIdx == -1 || instrIdx < goalIdx {
+		t.Errorf("instruction must follow the goal (goal=%d instr=%d):\n%s", goalIdx, instrIdx, out)
+	}
+	if !strings.Contains(out, "(none)") {
+		t.Errorf("zero-hits chunk block missing (none) placeholder:\n%s", out)
 	}
 }
