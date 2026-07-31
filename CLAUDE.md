@@ -116,6 +116,24 @@ port-forward), embedder `bge-m3` (1024d; default since F2/#13 —
 `qwen2.5:14b-instruct-q6_K`. Subcommands should populate their Config
 structs from `config.Resolve()` rather than reading env directly.
 
+**Backend cache warm windows (epic #119 S4).**
+- `OLIFANT_OLLAMA_KEEP_ALIVE` (default `30m`) — injected as request-level
+  `keep_alive` on both generate lanes (synth + PSP local executor) and the
+  embed lane, holding model + KV resident between calls. `0` = unload
+  immediately, `-1` = forever. On the shared mini, remember 30m of VRAM
+  residency outlives your run — shorten it if another session needs the GPU.
+- `OLIFANT_CLAUDE_CACHE_1H` (default `true`) — sets
+  `ENABLE_PROMPT_CACHING_1H=true` on the `claude` subprocess env (both the
+  synth backend and the PSP claude executor), extending the subscription
+  lane's ephemeral cache TTL to 1h. `false` = don't add the var (inherit the
+  shell's). The 1h TTL only pays off if the prompt prefix is byte-stable
+  across invocations — keep HEAD pinned for the duration of a run (the
+  git-status snapshot participates in the CLI's cache key; existing
+  pin-worktree discipline). KV-prefix payoff on the Ollama side additionally
+  needs the S3 (#122) prompt reorder; the cold/warm measurement recipe lives
+  with the epic's B1 baseline (run twice with `--refresh` then warm, compare
+  `olifant cache status` + prefill timings).
+
 **PSP — Prompt-Step Protocol v1 (`internal/psp/`).** The execution
 engine, modeled as a TCP-like state machine (SYN/ACK/STEP/FIN segments,
 states in `types.go`). The runner walks a `Plan`'s steps, dispatches
