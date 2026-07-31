@@ -10,14 +10,15 @@ import (
 // ContextConfig parameterises BuildContext — the retrieval-only half of the
 // prompt pipeline (charter R2 / D-OP1: no synthesizer anywhere on this path).
 type ContextConfig struct {
-	Goal      string
-	OllamaURL string
-	ChromaURL string
-	Embedder  string
-	Tenant    string
-	Database  string
-	Scopes    []string
-	TopN      int
+	Goal            string
+	OllamaURL       string
+	OllamaKeepAlive string // embed-lane keep_alive (#119 S4)
+	ChromaURL       string
+	Embedder        string
+	Tenant          string
+	Database        string
+	Scopes          []string
+	TopN            int
 	// MaxChars caps each chunk body in the output (0 = no cap).
 	MaxChars int
 	Verbose  bool
@@ -59,6 +60,7 @@ func BuildContext(ctx context.Context, cfg ContextConfig) (*ContextResult, error
 		OllamaURL: cfg.OllamaURL,
 		ChromaURL: cfg.ChromaURL,
 		Embedder:  cfg.Embedder,
+		KeepAlive: cfg.OllamaKeepAlive,
 		Tenant:    cfg.Tenant,
 		Database:  cfg.Database,
 		Scopes:    cfg.Scopes,

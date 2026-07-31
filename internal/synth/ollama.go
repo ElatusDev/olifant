@@ -25,9 +25,12 @@ func (o *Ollama) WithKeepAlive(v string) *Ollama {
 	return o
 }
 
-// ToOllamaRequest maps a Request onto the Ollama wire shape. Exported so
-// the prompt package's OLIFANT_PROMPT_DEBUG dump stays byte-identical to
-// what actually goes over the wire.
+// ToOllamaRequest maps a Request onto the Ollama wire shape — the prompt,
+// system, options, and schema bytes. Exported for the prompt package's
+// OLIFANT_PROMPT_DEBUG dump. Since #123 the wire body may additionally
+// carry a client-injected `keep_alive` (transport tuning, outside the
+// prompt/cache-prefix bytes) that the dump deliberately omits — a replayed
+// dump reproduces the model interaction, not the residency hint.
 func ToOllamaRequest(req Request) ollama.GenerateRequest {
 	return ollama.GenerateRequest{
 		Model:  req.Model,

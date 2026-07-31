@@ -236,7 +236,10 @@ func TestRun_Cache1HSetsEnvAndPreservesInherited(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "env.txt")
 	bin := fakeEnvBinary(t, envFile)
 	t.Setenv("OLIFANT_TEST_CANARY", "inherited-ok")
-	t.Setenv("ENABLE_PROMPT_CACHING_1H", "") // pin the parent state
+	// Pin the parent to the CONFLICTING value: guaranteed-on relies on
+	// os/exec's documented last-value-wins duplicate handling — the
+	// appended "true" must beat an inherited "false".
+	t.Setenv("ENABLE_PROMPT_CACHING_1H", "false")
 
 	if _, err := Run(context.Background(), bin, Args{Prompt: "p"}, Options{Cache1H: true}); err != nil {
 		t.Fatalf("Run: %v", err)

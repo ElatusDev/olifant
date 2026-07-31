@@ -118,9 +118,13 @@ structs from `config.Resolve()` rather than reading env directly.
 
 **Backend cache warm windows (epic #119 S4).**
 - `OLIFANT_OLLAMA_KEEP_ALIVE` (default `30m`) — injected as request-level
-  `keep_alive` on both generate lanes (synth + PSP local executor) and the
-  embed lane, holding model + KV resident between calls. `0` = unload
-  immediately, `-1` = forever. On the shared mini, remember 30m of VRAM
+  `keep_alive` on the wired lanes: both generate lanes (synth backend + PSP
+  local executor) and the prompt-lane embeds (`prompt build`/`context`,
+  `retrieve`). The corpus/repo indexer and eval-advice embed clients are
+  deliberately NOT wired (measurement-gated, workflow D-5) — bge-m3 there
+  still unloads at the server default. `0` = unload immediately, `-1` =
+  forever, explicit-empty (`OLIFANT_OLLAMA_KEEP_ALIVE=""`) = send nothing
+  (the pre-#123 wire shape). On the shared mini, remember 30m of VRAM
   residency outlives your run — shorten it if another session needs the GPU.
 - `OLIFANT_CLAUDE_CACHE_1H` (default `true`) — sets
   `ENABLE_PROMPT_CACHING_1H=true` on the `claude` subprocess env (both the

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -29,12 +30,19 @@ func TestResolve_SynthBackendOllamaFallback(t *testing.T) {
 }
 
 func TestResolve_OllamaKeepAlive(t *testing.T) {
-	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "")
+	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "placeholder") // register cleanup
+	_ = os.Unsetenv("OLIFANT_OLLAMA_KEEP_ALIVE")
 	if got := Resolve().OllamaKeepAlive; got != "30m" {
-		t.Errorf("default OllamaKeepAlive = %q, want 30m", got)
+		t.Errorf("unset OllamaKeepAlive = %q, want default 30m", got)
 	}
 	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "-1")
 	if got := Resolve().OllamaKeepAlive; got != "-1" {
 		t.Errorf("override OllamaKeepAlive = %q, want -1", got)
+	}
+	// Explicit empty = "send nothing" — the pre-#123 wire-shape rollback
+	// lever (workflow §8). Deleting envAllowEmpty fails THIS case (AP288).
+	t.Setenv("OLIFANT_OLLAMA_KEEP_ALIVE", "")
+	if got := Resolve().OllamaKeepAlive; got != "" {
+		t.Errorf("explicit-empty OllamaKeepAlive = %q, want \"\" (send nothing)", got)
 	}
 }

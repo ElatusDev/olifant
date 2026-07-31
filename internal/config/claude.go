@@ -23,6 +23,8 @@ import (
 //	OLIFANT_CLAUDE_EFFORT     default: empty (use CLI's default)
 //	OLIFANT_CLAUDE_TIMEOUT    default: 120 (seconds, per step)
 //	OLIFANT_CLAUDE_WORKDIR    default: empty (subprocess inherits cwd)
+//	OLIFANT_CLAUDE_CACHE_1H   default: true (#119 S4) — sets ENABLE_PROMPT_CACHING_1H
+//	  on the subprocess; false = don't add (inherit the shell's value)
 type ClaudeConfig struct {
 	Binary  string
 	Model   string

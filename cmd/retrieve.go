@@ -181,16 +181,17 @@ func Retrieve(args []string) int {
 		}
 	} else {
 		res, err = prompt.BuildContext(ctx, prompt.ContextConfig{
-			Goal:      goal,
-			OllamaURL: rt.OllamaURL,
-			ChromaURL: rt.ChromaURL,
-			Embedder:  rt.Embedder,
-			Tenant:    rt.ChromaTenant,
-			Database:  rt.ChromaDatabase,
-			Scopes:    scopeList,
-			TopN:      *topN,
-			MaxChars:  *maxChars,
-			Verbose:   *verbose,
+			Goal:            goal,
+			OllamaURL:       rt.OllamaURL,
+			OllamaKeepAlive: rt.OllamaKeepAlive,
+			ChromaURL:       rt.ChromaURL,
+			Embedder:        rt.Embedder,
+			Tenant:          rt.ChromaTenant,
+			Database:        rt.ChromaDatabase,
+			Scopes:          scopeList,
+			TopN:            *topN,
+			MaxChars:        *maxChars,
+			Verbose:         *verbose,
 		})
 	}
 	if err != nil {
