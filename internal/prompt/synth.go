@@ -88,19 +88,27 @@ func synthesize(ctx context.Context, cfg synthConfig, goal string, hits []Hit) (
 	}, nil
 }
 
-// buildPromptText assembles the user-facing prompt body. The goal comes
-// first; retrieved chunks follow with provenance breadcrumbs so the model
-// can ground signals[] entries against real source paths.
+// buildPromptText assembles the user-facing prompt body, ordered
+// stable-prefix-first for backend prefix caches (epic #119 S3, #122): the
+// retrieved-chunk block leads with provenance breadcrumbs (scope,
+// artifact_id, anchor — all stable per chunk) and NO per-call floats; the
+// semi-volatile distances sit in a compact trailer after the chunks; the
+// maximally-volatile USER GOAL comes after that, and the static instruction
+// closes. Identical replays (eval battery, retries, CI) share the full
+// prompt prefix; similar goals sharing a chunk set share the chunk block.
+// Goal-first was the original intentional layout — this reorder is
+// receipt-gated by the eval battery (workflow §9 gate 2).
 func buildPromptText(goal string, hits []Hit) string {
 	var sb strings.Builder
-	sb.WriteString("USER GOAL:\n")
-	sb.WriteString(strings.TrimSpace(goal))
-	sb.WriteString("\n\nRETRIEVED CONTEXT (top corpus chunks ordered by similarity):\n\n")
+	sb.WriteString("RETRIEVED CONTEXT (top corpus chunks ordered by similarity):\n\n")
+	if len(hits) == 0 {
+		sb.WriteString("(none)\n\n")
+	}
 	for i, h := range hits {
 		source, _ := h.Meta["source"].(string)
 		anchor, _ := h.Meta["source_anchor"].(string)
 		aid, _ := h.Meta["artifact_id"].(string)
-		fmt.Fprintf(&sb, "--- chunk %d (distance=%.4f, scope=%s", i+1, h.Distance, h.Scope)
+		fmt.Fprintf(&sb, "--- chunk %d (scope=%s", i+1, h.Scope)
 		if aid != "" {
 			fmt.Fprintf(&sb, ", artifact_id=%s", aid)
 		}
@@ -116,7 +124,16 @@ func buildPromptText(goal string, hits []Hit) string {
 		}
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("\nPRODUCE THE PROMPT-STEP PLAN NOW AS JSON, FOLLOWING THE SCHEMA EXACTLY.\n")
+	if len(hits) > 0 {
+		sb.WriteString("CHUNK DISTANCES (cosine, lower = closer):")
+		for i, h := range hits {
+			fmt.Fprintf(&sb, " %d=%.4f", i+1, h.Distance)
+		}
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("USER GOAL:\n")
+	sb.WriteString(strings.TrimSpace(goal))
+	sb.WriteString("\n\nPRODUCE THE PROMPT-STEP PLAN NOW AS JSON, FOLLOWING THE SCHEMA EXACTLY.\n")
 	sb.WriteString("Output JSON only — no surrounding prose, no code fences.\n")
 	return sb.String()
 }
