@@ -34,6 +34,18 @@ var citePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(OL|OT|OM|OH|OE|OW|OA|OI|AO)-\d+\b`),
 	// Schema-source rule
 	regexp.MustCompile(`\bSS-\d+\b`),
+
+	// Issue-scoped IDs (KB D-563a): entries authored 2026-08-03+ are keyed to
+	// the GitHub issue they came from — `AP-<issue><letter>` / `D-<issue><letter>`
+	// and the per-stack anti-pattern families — instead of a shared sequential
+	// counter (which raced: three KB PRs claimed AP313 on 2026-08-03).
+	//
+	// The trailing letter is REQUIRED, and that is load-bearing: it separates a
+	// KB artifact (`D-563a`) from a *workflow-local* ID (`D-486-1`, `AP-720-2`),
+	// which is doc-scoped and must stay unrecognized — extracting one would make
+	// it an unresolvable cite and block the doc under the D218 publication gate.
+	regexp.MustCompile(`\b(AP|D)-\d+[a-z]\b`),
+	regexp.MustCompile(`\b(ABB|ABO|ABC|ABD|ABE|ABS|ABT|AWC|AWH|AWS|AWR|AWT|AWB|AWTA|AWA|AMC|AMP|AMS|AMN|AMH|AME|AMTA)-\d+[a-z]\b`),
 }
 
 // ExtractCites returns deduplicated, sorted artifact IDs referenced anywhere in body.
